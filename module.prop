@@ -1,0 +1,6 @@
+id=oneplus_global_wifi_beast
+name=OnePlus Universal Wi-Fi Beast
+version=v2.2_US_AU_JP_Extreme
+versionCode=220
+author=Blueokanna
+description=US默认强制 + AU 1000mW功率档 + JP信道兼容 + 6GHz热点增强；仅运行时策略，不修改 system/vendor/odm 分区文件。
