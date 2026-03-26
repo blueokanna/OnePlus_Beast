@@ -24,7 +24,7 @@
 #### 2. 发射功率策略
 - 目标是 AU 风格的高功率档位。
 - 运行时会根据温度、信号与屏幕状态进行动态降额。
-- 不是简单的“永远拉满”，而是尽量在稳定性、温控和续航之间做平衡。
+- 尽量在稳定性、温控和续航之间做平衡。
 
 #### 3. JP 附加信道兼容
 - 额外开放 2.4G 的 14 信道相关兼容开关。
@@ -51,11 +51,11 @@
 - AU 风格功率档用于争取更宽松的发射能力，但在脚本层加了热管理和信号判断，避免盲目拉满。
 - JP 附加信道兼容用于补足部分路由器和部分频段场景下的可见性和可连性。
 - 6GHz / Wi‑Fi 7 / MLO / 热点 6GHz 是核心能力，先保证你这套 Wi‑Fi 7 路由器与终端真正用起来。
-- WiFi 8 风格部分不是伪造标准，而是把 WiFi 8 里更偏调度、协同、恢复的能力，尽可能映射到现有 Wi‑Fi 7 平台可执行的策略上。
+- WiFi 8 风格部分是把 WiFi 8 里更偏调度、协同、恢复的能力，尽可能映射到现有 Wi‑Fi 7 平台可执行的策略上。
 
 ### WiFi 8 特性对应表
 
-| 图中 WiFi 8 特性 | 本模块对应做法 | 作用 |
+| WiFi 8 特性 | 本模块对应做法 | 作用 |
 | --- | --- | --- |
 | Coordinated TWT | `persist.vendor.wifi.twt_coordinated_enabled=1`，并持续下发相关策略 | 更好的定时唤醒与低功耗协同 |
 | Multi-Link Operation | MLO 相关属性、链路平衡、重关联与修复 | 提升多链路稳定性和吞吐 |
@@ -125,7 +125,7 @@
 
 - 本模块不会修改 system 分区。
 - 实际最终效果仍然受设备驱动、固件、地区法规和路由器侧能力影响。
-- “WiFi 8 风格”是稳定性增强策略，不代表真实的 802.11bn 硬件能力。
+- 稳定性增强策略，不代表真实的 802.11bn 硬件能力。
 
 ### 免责声明
 
@@ -221,7 +221,7 @@ This combination is not random tuning; it is intentionally built in the order of
 
 ### WiFi 8 Feature Mapping
 
-| WiFi 8 feature in the image | Module mapping | Purpose |
+| WiFi 8 feature | Module mapping | Purpose |
 | --- | --- | --- |
 | Coordinated TWT | `persist.vendor.wifi.twt_coordinated_enabled=1` plus runtime enforcement | Better wake scheduling and power coordination |
 | Multi-Link Operation | MLO properties, link balancing, reassociation, and healing | Better throughput and stability across links |
