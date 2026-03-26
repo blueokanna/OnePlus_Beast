@@ -1,0 +1,86 @@
+name: Build and Release OnePlus Beast
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read module metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          MODULE_NAME="$(sed -n 's/^name=//p' module.prop | head -n 1)"
+          MODULE_VERSION="$(sed -n 's/^version=//p' module.prop | head -n 1)"
+          MODULE_VERSION_CODE="$(sed -n 's/^versionCode=//p' module.prop | head -n 1)"
+          SAFE_NAME="$(printf '%s' "$MODULE_NAME" | tr ' ' '_' | tr -cd 'A-Za-z0-9_.-')"
+          SHORT_SHA="${GITHUB_SHA::7}"
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            RELEASE_SUFFIX="${GITHUB_REF_NAME}"
+            RELEASE_TAG="${GITHUB_REF_NAME}"
+            IS_PRERELEASE="false"
+          else
+            RELEASE_SUFFIX="${MODULE_VERSION}-${SHORT_SHA}"
+            RELEASE_TAG="nightly"
+            IS_PRERELEASE="true"
+          fi
+
+          ZIP_NAME="${SAFE_NAME}_${RELEASE_SUFFIX}_vc${MODULE_VERSION_CODE}.zip"
+
+          {
+            echo "module_name=${MODULE_NAME}"
+            echo "module_version=${MODULE_VERSION}"
+            echo "module_version_code=${MODULE_VERSION_CODE}"
+            echo "zip_name=${ZIP_NAME}"
+            echo "release_title=${MODULE_NAME} ${RELEASE_SUFFIX}"
+            echo "release_tag=${RELEASE_TAG}"
+            echo "is_prerelease=${IS_PRERELEASE}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Package module zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          zip -r9 "out/${{ steps.meta.outputs.zip_name }}" . \
+            -x ".git/*" \
+               ".github/*" \
+               "out/*" \
+               "*.zip" \
+               "*.DS_Store"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.zip_name }}
+          path: out/${{ steps.meta.outputs.zip_name }}
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.release_tag }}
+          files: out/${{ steps.meta.outputs.zip_name }}
+          name: ${{ steps.meta.outputs.release_title }}
+          prerelease: ${{ steps.meta.outputs.is_prerelease == 'true' }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
