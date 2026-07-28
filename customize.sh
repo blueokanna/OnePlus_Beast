@@ -34,6 +34,7 @@ patch_cfg_file() {
 	# Core behavior aligned with AndroPlus approach + OnePlus Beast profile.
 	set_or_append "$f" "gCountryCodePriority" "1"
 	set_or_append "$f" "gOemForceCountryCode" "$TARGET_CC"
+	set_or_append "$f" "g11dSupportEnabled" "0"
 	set_or_append "$f" "gEnable6Ghz" "1"
 	set_or_append "$f" "gEnable6GHzBand" "1"
 	set_or_append "$f" "gEnable6GHzPsc" "1"
@@ -63,22 +64,23 @@ patch_cfg_file() {
 	set_or_append "$f" "g6gTxPowerMaxDbm" "30"
 }
 
-if [ -e "/odm/vendor/etc/wifi/${WIFICFG}" ]; then
-	ui_print "  - Found /odm/vendor/etc/wifi/${WIFICFG}"
-	cp -af "/odm/vendor/etc/wifi/${WIFICFG}" "${XMLDIR}/${WIFICFG}"
-	patch_cfg_file "${XMLDIR}/${WIFICFG}"
-elif [ -e "/vendor/etc/wifi/${WIFICFG}" ]; then
-	ui_print "  - Found /vendor/etc/wifi/${WIFICFG}"
-	cp -af "/vendor/etc/wifi/${WIFICFG}" "${XMLDIR}/${WIFICFG}"
-	patch_cfg_file "${XMLDIR}/${WIFICFG}"
-else
-	ui_print "  - WCNSS cfg not found under odm/vendor, skip xml mirror"
+prepare_cfg_overlay() {
+	local source="$1"
+	local overlay="$2"
+
+	[ -e "$source" ] || return 1
+	ui_print "  - Found ${source}"
+	cp -af "$source" "${XMLDIR}/${overlay}"
+	patch_cfg_file "${XMLDIR}/${overlay}"
+}
+
+CFG_FOUND=0
+prepare_cfg_overlay "/odm/vendor/etc/wifi/${WIFICFG}" "odm_${WIFICFG}" && CFG_FOUND=1
+prepare_cfg_overlay "/vendor/etc/wifi/${WIFICFG}" "vendor_${WIFICFG}" && CFG_FOUND=1
+prepare_cfg_overlay "/mnt/vendor/persist/wlan/${WIFICFG}" "persist_${WIFICFG}" && CFG_FOUND=1
+
+if [ "$CFG_FOUND" -eq 0 ]; then
+	ui_print "  - WCNSS cfg not found, skip cfg overlay"
 fi
 
-
-if [ -e "/mnt/vendor/persist/wlan/${WIFICFG}" ]; then
-	ui_print "  - Patching /mnt/vendor/persist/wlan/${WIFICFG}"
-	patch_cfg_file "/mnt/vendor/persist/wlan/${WIFICFG}"
-fi
-
-ui_print "- customize done (no system partition file was modified)"
+ui_print "- customize done (partition files were not modified)"

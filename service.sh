@@ -1,5 +1,13 @@
 #!/system/bin/sh
 
+MODDIR=${0%/*}
+
+# Keep the fast country/6 GHz watchdog independent from the heavier policy loop.
+if [ "$(getprop persist.sys.opb.6ghz.heartbeat)" != "0" ] && \
+    [ -f "${MODDIR}/wifi-heartbeat.sh" ]; then
+    sh "${MODDIR}/wifi-heartbeat.sh" >/dev/null 2>&1 &
+fi
+
 until [ "$(getprop sys.boot_completed)" = "1" ]; do
     sleep 2
 done
@@ -15,11 +23,13 @@ verify_runtime_state() {
     local cc="$1"
     local reg=""
     local forced=""
+    local six=""
 
     forced="$(getprop persist.vendor.wifi.country_code)"
     reg="$(iw reg get 2>/dev/null | awk '/country/{print $2; exit}' | tr -d ':')"
+    six="$(get_6ghz_channel_state)"
 
-    logi "verify target_cc=${cc} persist_cc=${forced} reg=${reg}"
+    logi "verify target_cc=${cc} persist_cc=${forced} reg=${reg} six_ghz=${six}"
 }
 
 normalize_cc() {
@@ -132,6 +142,16 @@ set_country_props() {
     resetprop persist.vendor.wifi.country_code "$cc"
     resetprop persist.sys.wifi.default_country_code "$cc"
     resetprop persist.vendor.wifi.default_country_code "$cc"
+    resetprop wlan.driver.country "$cc"
+    resetprop vendor.wlan.country_code "$cc"
+    resetprop vendor.wifi.ap_country_code "$cc"
+
+    # A hard country lock must not leave a second dynamic path for telephony MCC.
+    resetprop persist.vendor.wifi.dynamic_regdom 0
+    resetprop persist.sys.wifi.dynamic_regdom 0
+    resetprop persist.vendor.wifi.world_mode 0
+    resetprop persist.vendor.wlan.global_regdom_mode 0
+    resetprop persist.vendor.wifi.allow_11d 0
 }
 
 enforce_country_runtime() {
@@ -152,7 +172,6 @@ enforce_country_runtime() {
 
     if command -v cmd >/dev/null 2>&1; then
         cmd wifi force-country-code enabled "$cc" >/dev/null 2>&1
-        cmd wifi force-country-code "$cc" >/dev/null 2>&1
     fi
 }
 
@@ -230,6 +249,7 @@ set_wifi8_like_settings() {
     settings put global wifi_suspend_optimizations_enabled 0
     settings put global wifi_framework_scan_interval_ms 15000
     settings put global wifi_score_params "rssi2=-80:-73:-60,rssi5=-80:-70:-57"
+    settings put global wifi_6ghz_support 1
     settings put global wifi_display_mlo_info 1
     settings put global wifi_show_band_summary 1
 }
@@ -246,6 +266,39 @@ warmup_country_lock() {
         n=$((n + 1))
         sleep 3
     done
+}
+
+get_6ghz_channel_state() {
+    local state=""
+
+    command -v iw >/dev/null 2>&1 || {
+        echo "unknown"
+        return
+    }
+
+    state="$(iw phy 2>/dev/null | awk '
+        /^Wiphy / { phy_seen = 1 }
+        /MHz/ {
+            phy_seen = 1
+            for (i = 1; i <= NF; i++) {
+                if ($i == "MHz") {
+                    freq = $(i - 1) + 0
+                    if (freq >= 5925 && freq <= 7125) {
+                        seen = 1
+                        if ($0 !~ /disabled/) enabled = 1
+                    }
+                }
+            }
+        }
+        END {
+            if (!phy_seen) print "unknown"
+            else if (enabled) print "enabled"
+            else if (seen) print "disabled"
+            else print "absent"
+        }
+    ')"
+
+    [ -n "$state" ] && echo "$state" || echo "unknown"
 }
 
 ensure_ace_target_device() {
@@ -582,7 +635,7 @@ if ! ensure_ace_target_device; then
     exit 0
 fi
 
-# Dynamic country first; fallback world mode when unknown.
+# Resolve the configured country; hard-lock mode returns US before any dynamic source.
 TARGET_CC="$(pick_dynamic_country)"
 enforce_country_runtime "$TARGET_CC"
 warmup_country_lock "$TARGET_CC"
@@ -609,13 +662,14 @@ fi
 CC_NOW="$(getprop persist.vendor.wifi.country_code)"
 enforce_country_runtime "$CC_NOW"
 
-# Keep adaptive behavior alive after roaming, SIM/network changes, or Wi-Fi stack restart.
+# Keep the slower adaptive policies alive; wifi-heartbeat.sh handles radio transitions.
 MLO_BAD_STREAK=0
 LINK_BAD_STREAK=0
 while true; do
     TARGET_CC="$(pick_dynamic_country)"
     CUR_CC="$(normalize_cc "$(getprop persist.vendor.wifi.country_code)")"
     SCREEN_ON="$(is_screen_on)"
+
     if [ "$TARGET_CC" != "$CUR_CC" ]; then
         enforce_country_runtime "$TARGET_CC"
         logi "Regdom switched to $TARGET_CC"

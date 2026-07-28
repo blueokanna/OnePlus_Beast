@@ -9,10 +9,7 @@
 它的目标是在**不修改 system 分区**的前提下，通过运行时属性、WCNSS 配置覆盖和 Wi-Fi 服务策略，尽可能实现以下效果：
 
 - 默认强制 US 地区
-- 使用 AU 风格的高功率档位，但保留热管理与健康安全降额
-- 启用 JP 相关附加信道兼容
 - 启用 6GHz、Wi-Fi 7、MLO、热点 6GHz 等能力
-- 加入类似 WiFi 8 的稳定性增强策略
 
 ### 核心特性
 
@@ -96,7 +93,9 @@
 2. 重启设备。
 3. 进入系统后打开 Wi-Fi，等待模块完成首轮锁定。
 4. 如需确认是否生效，可查看日志：
-   - `logcat -s OnePlusBeast`
+   - `logcat -s OnePlusBeast OnePlusBeastHB`
+   - 心跳日志：`/data/adb/modules/oneplus_global_wifi_beast/wifi-heartbeat.log`
+   - 心跳状态：`/data/adb/modules/oneplus_global_wifi_beast/wifi-heartbeat.status`
 
 ### 常用参数
 
@@ -120,6 +119,12 @@
   - 默认 `100`
 - `persist.sys.opb.hotspot_6ghz_force`
   - `1` = 强制热点 6GHz
+- `persist.sys.opb.6ghz.heartbeat`
+  - `1` = 开启独立 6GHz 心跳守护进程
+- `persist.sys.opb.6ghz.heartbeat_interval`
+  - 默认 `2` 秒，可设置范围为 `1` 到 `10`
+- `persist.sys.opb.6ghz.recovery_cooldown`
+  - 6GHz 信道持续丢失时，硬恢复的最短间隔，默认 `60` 秒
 
 ### 重要说明
 
@@ -153,15 +158,17 @@
 如果你发现没有生效：
 
 1. 确认模块已启用。
-2. 重启后检查日志：`logcat -s OnePlusBeast`
-3. 确认 `WCNSS_qcom_cfg.ini` 是否已从模块目录挂载到实际 Wi-Fi 路径。
-4. 如果国家码仍异常，优先检查是否有其他 Wi-Fi 模块冲突。
+2. 重启后检查日志：`logcat -s OnePlusBeast OnePlusBeastHB`
+3. 检查模块目录内的 `wifi-heartbeat.log` 和 `wifi-heartbeat.status`。
+4. 确认 WCNSS 配置是否已从模块目录挂载到实际 Wi-Fi 路径。
+5. 如果国家码仍异常，优先检查是否有其他 Wi-Fi 模块冲突。
 
 ### 文件说明
 
 - [customize.sh](customize.sh)
 - [post-fs-data.sh](post-fs-data.sh)
 - [service.sh](service.sh)
+- [wifi-heartbeat.sh](wifi-heartbeat.sh)
 - [system.prop](system.prop)
 - [module.prop](module.prop)
 - [LICENSE](LICENSE)
@@ -174,6 +181,11 @@ It aims to enhance Wi-Fi behavior **without modifying the system partition**, us
 
 ### Core Goals
 
+- Run an independent 2-second 6GHz country/HAL/cfg80211 heartbeat
+- Rebuild Wi-Fi after a debounced cellular or airplane-mode transition even when PHY capability still looks enabled
+- Keep the 6GHz channel table available across cellular registration and airplane-mode changes
+- Detect the real PHY channel state and recover the Wi-Fi stack only when 6GHz is actually lost
+- Use module overlays and runtime properties without writing system, vendor, odm, or persist partition files
 - Force US as the default region
 - Use an AU-style high-power profile with thermal/health-aware derating
 - Enable JP-specific extra channel compatibility
@@ -261,7 +273,7 @@ The module avoids modifying the system partition and works in three stages:
 2. Reboot the device.
 3. Open Wi-Fi after boot and wait for the initial enforcement cycle.
 4. Check logs if needed:
-   - `logcat -s OnePlusBeast`
+   - `logcat -s OnePlusBeast OnePlusBeastHB`
 
 ### Default Profile
 
@@ -283,6 +295,12 @@ The module avoids modifying the system partition and works in three stages:
   - Default `100`
 - `persist.sys.opb.hotspot_6ghz_force`
   - `1` forces 6GHz hotspot mode
+- `persist.sys.opb.6ghz.heartbeat`
+  - `1` enables the independent 6GHz heartbeat daemon
+- `persist.sys.opb.6ghz.heartbeat_interval`
+  - Heartbeat interval in seconds, clamped from `1` to `10`; default `2`
+- `persist.sys.opb.6ghz.recovery_cooldown`
+  - Minimum hard-recovery interval while 6GHz channels stay unavailable; default `60`
 
 ### Important Notes
 
@@ -316,6 +334,7 @@ The module avoids modifying the system partition and works in three stages:
 If the module does not appear to work:
 
 1. Make sure the module is enabled.
-2. Reboot and check `logcat -s OnePlusBeast`.
-3. Confirm the Wi-Fi cfg overlay is mounted from the module directory.
-4. Check for conflicts with other Wi-Fi modules first.
+2. Reboot and check `logcat -s OnePlusBeast OnePlusBeastHB`.
+3. Check `wifi-heartbeat.log` and `wifi-heartbeat.status` in the module directory.
+4. Confirm the Wi-Fi cfg overlays are mounted from the module directory.
+5. Check for conflicts with other Wi-Fi modules first.
