@@ -8,9 +8,15 @@ TARGET_CC="US"
 
 . "${MODPATH}/compat.sh"
 opb_detect_platform
-opb_is_target_device || abort "! OnePlus/OPPO Qualcomm device required"
 ui_print "- Device: ${OPB_MODEL}; Android ${OPB_ANDROID} (SDK ${OPB_SDK})"
 ui_print "- Kernel: ${OPB_KERNEL}; page size: ${OPB_PAGE_SIZE:-unknown}"
+ui_print "- Brands: ${OPB_BRANDS:-unavailable}"
+ui_print "- SoC: ${OPB_SOC:-unavailable}; model: ${OPB_SOC_MODEL:-unavailable}; hardware: ${OPB_HARDWARE}"
+ui_print "- Device check: ${OPB_DEVICE_MATCH} (${OPB_DEVICE_REASON})"
+case "$OPB_DEVICE_MATCH" in
+    unsupported) abort "! ${OPB_DEVICE_REASON}" ;;
+    unverified) ui_print "! Device metadata could not be verified; continuing with runtime capability checks" ;;
+esac
 
 ui_print "- OnePlus Beast customize: preparing Wi-Fi cfg patches"
 mkdir -p "${XMLDIR}"

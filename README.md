@@ -11,7 +11,12 @@
 - 默认强制 US 地区
 - 启用 6GHz、Wi-Fi 7、MLO、热点 6GHz 等能力
 
-### 一加 15 / Android 17 适配（v2.4）
+### 一加 15 / Android 17 适配（v2.4.1）
+
+v2.4.1 修复 KernelSU 安装时被 `OnePlus/OPPO Qualcomm device required` 拦截的问题。
+检测优先使用 `/system/bin/getprop`，并组合 product/vendor/odm/system 等属性、SoC 型号和 hardware 标识，兼容 QTI、Qualcomm、Snapdragon 等写法。
+属性缺失、读取失败或无法识别时会显示 `unverified` 并继续安装与运行时能力检测；明确检测到其他品牌或非 Qualcomm SoC 时仍会停止。
+安装日志会先输出实际读取到的品牌、SoC 和判断原因；`unverified` 仅表示未确认机型，不代表功能验证通过。
 
 本次适配目标是 **OnePlus 15 + Android 17**，用户提供的内核为
 `6.12.69-android16-6-g5fd39602326e-ab16372235-4k`。
@@ -34,7 +39,7 @@ cat /data/adb/modules/oneplus_global_wifi_beast/wifi-heartbeat.status
 logcat -d -s OnePlusBeast OnePlusBeastHB
 ```
 
-`compatibility.status` 记录机型、系统、内核、页大小、工具及命令可用性；命令存在不代表驱动已接受配置。
+`compatibility.status` 记录机型、品牌与 SoC 原始属性、设备判断原因、系统、内核、页大小、工具及命令可用性；命令存在不代表驱动已接受配置。
 没有 WCNSS 文件的 ROM 会跳过配置覆盖，没有 `iw` 时无法确认 PHY 的 6GHz 信道状态。
 **当前验证范围是本地 Shell 语法和模拟回归测试，尚未在该设备/固件上实测。**
 6GHz、MLO 和热点效果需要结合真机日志、驱动和路由器验证，写入属性本身不代表功能已生效。
@@ -208,7 +213,14 @@ logcat -d -s OnePlusBeast OnePlusBeastHB
 This is a KSU/Magisk Wi-Fi module for OnePlus 11 and later OnePlus numeric flagship / Ace series devices.
 It aims to enhance Wi-Fi behavior **without modifying the system partition**, using runtime properties, Wi-Fi cfg overlay, and service-side enforcement.
 
-### OnePlus 15 / Android 17 compatibility (v2.4)
+### OnePlus 15 / Android 17 compatibility (v2.4.1)
+
+v2.4.1 fixes overly strict install-time device rejection. Detection prefers native
+`/system/bin/getprop`, checks partition-specific identity properties and SoC/hardware
+fallbacks, and accepts QTI/Qualcomm/Snapdragon identifiers. Missing, unreadable or unknown
+properties produce an `unverified` warning and allow capability checks to continue;
+positive evidence of an incompatible brand or SoC still stops the module. Installation
+logs and `compatibility.status` include the observed properties and decision reason.
 
 Target: OnePlus 15 running Android 17 with the reported kernel
 `6.12.69-android16-6-g5fd39602326e-ab16372235-4k`.

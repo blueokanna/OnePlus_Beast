@@ -3,7 +3,7 @@
 MODDIR=${0%/*}
 
 . "${MODDIR}/compat.sh"
-opb_is_target_device || exit 0
+opb_is_target_device || { log -t OnePlusBeast "$OPB_DEVICE_REASON"; exit 0; }
 RESETPROP="$(opb_find_resetprop)"
 
 until [ "$(getprop sys.boot_completed)" = "1" ]; do

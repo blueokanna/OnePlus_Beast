@@ -11,11 +11,18 @@ assert_eq() {
     [ "$1" = "$2" ] || { echo "FAIL: $3: expected '$2', got '$1'" >&2; exit 1; }
 }
 getprop() {
+    [ "${TEST_GETPROP_FAILURE:-0}" = 1 ] && return 127
+    [ "${TEST_EMPTY_PROPS:-0}" = 1 ] && return 0
     case "$1" in
-        ro.product.brand) echo "${TEST_BRAND:-OnePlus}" ;;
-        ro.product.manufacturer) echo OnePlus ;;
-        ro.soc.manufacturer) echo "${TEST_SOC:-Qualcomm}" ;;
-        ro.product.model) echo 'OnePlus 15' ;;
+        ro.product.brand) echo "${TEST_BRAND-OnePlus}" ;;
+        ro.product.manufacturer) echo "${TEST_MANUFACTURER-OnePlus}" ;;
+        ro.product.vendor.manufacturer) echo "${TEST_VENDOR_MANUFACTURER-}" ;;
+        ro.product.odm.brand) echo "${TEST_ODM_BRAND-}" ;;
+        ro.product.system.brand) echo "${TEST_SYSTEM_BRAND-}" ;;
+        ro.soc.manufacturer) echo "${TEST_SOC-Qualcomm}" ;;
+        ro.soc.model) echo "${TEST_SOC_MODEL-}" ;;
+        ro.hardware) echo "${TEST_HARDWARE-}" ;;
+        ro.product.model) echo "${TEST_MODEL-OnePlus 15}" ;;
         ro.build.version.release) echo "${TEST_ANDROID:-17}" ;;
         ro.build.version.sdk) echo 37 ;;
     esac
@@ -35,6 +42,50 @@ TEST_SOC=MediaTek
 if opb_is_target_device; then echo 'FAIL: accepted non-Qualcomm'; exit 1; fi
 unset TEST_SOC TEST_ANDROID
 echo 'PASS: platform detection'
+
+# KernelSU/property variants must not repeat v2.4's install-time rejection.
+for TEST_SOC in QTI 'Qualcomm Technologies, Inc.' Snapdragon ''; do
+    opb_is_target_device
+done
+TEST_SOC='unrecognized-vendor-string'
+opb_is_target_device
+assert_eq "$OPB_DEVICE_MATCH" unverified 'unfamiliar SoC is inconclusive'
+TEST_SOC='' TEST_SOC_MODEL=SM8850
+opb_is_target_device
+assert_eq "$OPB_DEVICE_MATCH" supported 'SoC model fallback'
+TEST_SOC_MODEL='' TEST_HARDWARE=qcom
+opb_is_target_device
+assert_eq "$OPB_DEVICE_MATCH" supported 'hardware fallback'
+TEST_BRAND=aosp TEST_MANUFACTURER='' TEST_MODEL=device TEST_VENDOR_MANUFACTURER=OnePlus
+opb_is_target_device
+assert_eq "$OPB_DEVICE_MATCH" supported 'vendor manufacturer fallback'
+TEST_VENDOR_MANUFACTURER='' TEST_ODM_BRAND=OPPO
+opb_is_target_device
+assert_eq "$OPB_DEVICE_MATCH" supported 'ODM brand fallback'
+TEST_ODM_BRAND='' TEST_SYSTEM_BRAND=OnePlus
+opb_is_target_device
+assert_eq "$OPB_DEVICE_MATCH" supported 'system brand fallback'
+TEST_SYSTEM_BRAND=''
+opb_is_target_device
+assert_eq "$OPB_DEVICE_MATCH" unverified 'generic GSI properties'
+TEST_EMPTY_PROPS=1
+opb_is_target_device
+assert_eq "$OPB_DEVICE_MATCH" unverified 'unavailable installer properties'
+unset TEST_EMPTY_PROPS
+TEST_GETPROP_FAILURE=1
+opb_is_target_device
+assert_eq "$OPB_DEVICE_MATCH" unverified 'getprop command failure'
+unset TEST_GETPROP_FAILURE
+TEST_BRAND=Google TEST_MANUFACTURER=Google TEST_MODEL=Pixel
+if opb_is_target_device; then echo 'FAIL: accepted known non-target brand'; exit 1; fi
+unset TEST_BRAND TEST_MANUFACTURER TEST_MODEL TEST_VENDOR_MANUFACTURER TEST_ODM_BRAND TEST_SYSTEM_BRAND TEST_HARDWARE
+TEST_SOC=MTK
+if opb_is_target_device; then echo 'FAIL: accepted MTK'; exit 1; fi
+TEST_SOC='' TEST_SOC_MODEL=MT6991
+if opb_is_target_device; then echo 'FAIL: accepted MediaTek model'; exit 1; fi
+unset TEST_SOC TEST_SOC_MODEL
+opb_detect_platform
+echo 'PASS: installer property aliases, fallbacks and explicit mismatches'
 
 # Mock the actual executable so the timeout path is exercised too.
 mkdir "$WORK/bin"
@@ -97,6 +148,7 @@ cp compat.sh "$WORK/module/compat.sh"
 printf '\nopb_find_cfg_sources() { cat "%s/discovered"; }\n' "$WORK" >> "$WORK/module/compat.sh"
 (
     MODPATH="$WORK/module"
+    TEST_SOC=QTI
     ui_print() { :; }
     abort() { echo "$*" >&2; exit 1; }
     set_perm() { :; }
@@ -122,6 +174,23 @@ printf '# no terminator\n' > "$WORK/no-end"
 opb_set_cfg_key "$WORK/no-end" key 1
 grep -qx 'key=1' "$WORK/no-end"
 echo 'PASS: installer, isolated copies, END handling and idempotency'
+
+# Exercise the actual install entry point when no device property can be read.
+mkdir "$WORK/unverified-module"
+cp compat.sh "$WORK/unverified-module/compat.sh"
+printf '\nopb_find_cfg_sources() { :; }\n' >> "$WORK/unverified-module/compat.sh"
+(
+    TEST_GETPROP_FAILURE=1
+    MODPATH="$WORK/unverified-module"
+    ui_print() { echo "$*"; }
+    abort() { echo "$*" >&2; exit 1; }
+    set_perm() { :; }
+    set_perm_recursive() { :; }
+    . "$ROOT/customize.sh"
+) > "$WORK/unverified-install.log"
+grep -q 'Device check: unverified' "$WORK/unverified-install.log"
+grep -q 'customize done' "$WORK/unverified-install.log"
+echo 'PASS: missing properties warn without aborting the installer'
 
 if opb_recovery_due -1 0 100 0 60; then echo 'FAIL: boot restart'; exit 1; fi
 if opb_recovery_due 0 0 130 100 60; then echo 'FAIL: radio cooldown'; exit 1; fi

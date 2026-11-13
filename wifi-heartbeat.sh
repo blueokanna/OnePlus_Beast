@@ -2,7 +2,7 @@
 
 MODDIR=${0%/*}
 . "${MODDIR}/compat.sh"
-opb_is_target_device || exit 0
+opb_is_target_device || { log -t OnePlusBeastHB "$OPB_DEVICE_REASON"; exit 0; }
 PID_FILE="${MODDIR}/wifi-heartbeat.pid"
 STATUS_FILE="${MODDIR}/wifi-heartbeat.status"
 LOG_FILE="${MODDIR}/wifi-heartbeat.log"

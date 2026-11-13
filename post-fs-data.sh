@@ -3,7 +3,7 @@
 MODDIR=${0%/*}
 WIFICFG="WCNSS_qcom_cfg.ini"
 . "${MODDIR}/compat.sh"
-opb_is_target_device || exit 0
+opb_is_target_device || { log -t OnePlusBeast "$OPB_DEVICE_REASON"; exit 0; }
 RESETPROP="$(opb_find_resetprop)"
 
 # PID files live in the module directory and must never survive a reboot.

@@ -1,15 +1,84 @@
 #!/system/bin/sh
 
 # Shared by installation, early boot and both runtime loops. No work on source.
+opb_getprop() {
+    # KernelSU installers may have a different PATH from an interactive shell.
+    if [ -x /system/bin/getprop ]; then
+        /system/bin/getprop "$1" 2>/dev/null || :
+    else
+        getprop "$1" 2>/dev/null || :
+    fi
+}
+
+opb_detect_target() {
+    local part value brands names socs platform
+    OPB_BRANDS=""
+    OPB_SOC="$(opb_getprop ro.soc.manufacturer)"
+    OPB_SOC_MODEL="$(opb_getprop ro.soc.model)"
+    OPB_HARDWARE="$(opb_getprop ro.hardware) $(opb_getprop ro.boot.hardware)"
+    for part in ro.product ro.product.vendor ro.product.odm ro.product.system ro.product.product; do
+        for value in "$(opb_getprop "$part.brand")" "$(opb_getprop "$part.manufacturer")"; do
+            [ -n "$value" ] && OPB_BRANDS="${OPB_BRANDS}${OPB_BRANDS:+ / }$value"
+        done
+    done
+    brands="$(printf '%s' "$OPB_BRANDS" | tr '[:upper:]' '[:lower:]')"
+    names="$(opb_getprop ro.product.model) $(opb_getprop ro.product.marketname) $(opb_getprop ro.vendor.oplus.market.name)"
+    names="$(printf '%s' "$names" | tr '[:upper:]' '[:lower:]')"
+    socs="$(printf '%s' "$OPB_SOC $OPB_SOC_MODEL $OPB_HARDWARE" | tr '[:upper:]' '[:lower:]')"
+    OPB_DEVICE_MATCH=unverified
+    OPB_DEVICE_REASON="device properties incomplete or unrecognized"
+
+    # Reject positive evidence of another SoC, not an unfamiliar spelling.
+    case "$socs" in
+        *mediatek*|*mtk*|*exynos*|*unisoc*|*spreadtrum*|*kirin*)
+            OPB_DEVICE_MATCH=unsupported
+            OPB_DEVICE_REASON="non-Qualcomm SoC: $OPB_SOC $OPB_SOC_MODEL"
+            return 0
+            ;;
+    esac
+    platform=unknown
+    case "$socs" in *qualcomm*|*qcom*|*qti*|*snapdragon*) platform=qualcomm ;; esac
+    case "$(printf '%s' "$OPB_SOC_MODEL" | tr '[:upper:]' '[:lower:]')" in
+        sm[0-9]*|msm[0-9]*|sdm[0-9]*) platform=qualcomm ;;
+        mt[0-9]*)
+            OPB_DEVICE_MATCH=unsupported
+            OPB_DEVICE_REASON="non-Qualcomm SoC model: $OPB_SOC_MODEL"
+            return 0
+            ;;
+    esac
+    case "$brands $names" in
+        *oneplus*|*oppo*)
+            if [ "$platform" = qualcomm ]; then
+                OPB_DEVICE_MATCH=supported
+                OPB_DEVICE_REASON="OnePlus/OPPO with Qualcomm identifiers"
+            else
+                OPB_DEVICE_REASON="OnePlus/OPPO detected; SoC properties unavailable or unrecognized"
+            fi
+            ;;
+        *)
+            # AOSP/GSI and missing installer properties are not proof of a mismatch.
+            case "$brands" in
+                *google*|*samsung*|*xiaomi*|*redmi*|*poco*|*huawei*|*honor*|*motorola*|*sony*)
+                    OPB_DEVICE_MATCH=unsupported
+                    OPB_DEVICE_REASON="non-OnePlus/OPPO brand: $OPB_BRANDS"
+                    ;;
+            esac
+            ;;
+    esac
+    return 0
+}
+
 opb_detect_platform() {
-    OPB_ANDROID="$(getprop ro.build.version.release)"
-    OPB_SDK="$(getprop ro.build.version.sdk)"
+    OPB_ANDROID="$(opb_getprop ro.build.version.release)"
+    OPB_SDK="$(opb_getprop ro.build.version.sdk)"
     OPB_KERNEL="$(uname -r)"
     OPB_PAGE_SIZE="$(getconf PAGESIZE 2>/dev/null)"
-    OPB_MODEL="$(getprop ro.product.model)"
+    OPB_MODEL="$(opb_getprop ro.product.model)"
+    opb_detect_target
     OPB_PROFILE="oneplus-qualcomm"
+    [ "$OPB_DEVICE_MATCH" = supported ] || OPB_PROFILE="$OPB_DEVICE_MATCH"
     local names
-    names="$(printf '%s' "$OPB_MODEL $(getprop ro.product.marketname) $(getprop ro.vendor.oplus.market.name)" | tr '[:upper:]' '[:lower:]' | tr -d ' _-')"
+    names="$(printf '%s' "$OPB_MODEL $(opb_getprop ro.product.marketname) $(opb_getprop ro.vendor.oplus.market.name)" | tr '[:upper:]' '[:lower:]' | tr -d ' _-')"
     case "$names" in
         *oneplus15*) OPB_PROFILE="oneplus15" ;;
     esac
@@ -22,12 +91,9 @@ opb_detect_platform() {
 }
 
 opb_is_target_device() {
-    local vendor soc
-    vendor="$(getprop ro.product.brand) $(getprop ro.product.manufacturer) $(getprop ro.product.vendor.brand)"
-    vendor="$(printf '%s' "$vendor" | tr '[:upper:]' '[:lower:]')"
-    soc="$(getprop ro.soc.manufacturer | tr '[:upper:]' '[:lower:]')"
-    case "$vendor" in *oneplus*|*oppo*) ;; *) return 1 ;; esac
-    case "$soc" in *qcom*|*qualcomm*|'') return 0 ;; *) return 1 ;; esac
+    opb_detect_target
+    # Missing metadata must not abort installation or silently stop runtime.
+    [ "$OPB_DEVICE_MATCH" != unsupported ]
 }
 
 opb_find_resetprop() {
@@ -86,6 +152,12 @@ opb_write_compat_report() {
     {
         echo "profile=$OPB_PROFILE"
         echo "model=$OPB_MODEL"
+        echo "device_match=$OPB_DEVICE_MATCH"
+        echo "device_reason=$OPB_DEVICE_REASON"
+        echo "brands=$OPB_BRANDS"
+        echo "soc_manufacturer=$OPB_SOC"
+        echo "soc_model=$OPB_SOC_MODEL"
+        echo "hardware=$OPB_HARDWARE"
         echo "android_release=$OPB_ANDROID"
         echo "android_sdk=$OPB_SDK"
         echo "kernel=$OPB_KERNEL"
