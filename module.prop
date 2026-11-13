@@ -1,6 +1,6 @@
 id=oneplus_global_wifi_beast
 name=OnePlus Universal Wi-Fi Beast
-version=v2.6
-versionCode=260
+version=v2.6.1
+versionCode=261
 author=blueokanna
-description=6GHz repair Action button; bounded initialization after framework restart or module load. No reconnect loops for missing APs, weak links or normal 5GHz connections.
+description=Fixes post-reboot repair rejection when the OEM service state is unset; detailed diagnostics, 6GHz Action button and bounded event initialization without reconnect loops.

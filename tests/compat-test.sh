@@ -203,4 +203,5 @@ assert_eq "$(printf '%s\n' "$REG_DUMP" | opb_parse_reg_country 9)" unknown 'miss
 
 sh tests/wifi-policy-test.sh
 sh tests/lifecycle-test.sh
+sh tests/driver-preflight-test.sh
 echo "All compatibility tests passed."

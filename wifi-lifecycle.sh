@@ -92,7 +92,6 @@ opb_repair_once() (
     exec 8> "$MODDIR/driver-repair.lock"
     flock -n 8 8>&8 || { echo 'Repair is in progress, please check the results later.'; exit 75; }
     [ ! -f "$MODDIR/disable" ] && [ ! -f "$MODDIR/remove" ] || exit 1
-    opb_driver_reload_supported || { echo 'The current device has not passed the manufacturer driver repair check'; exit 1; }
     opb_read_connection
     [ "$OPB_LINK_STATE" != connected_6ghz ] || { echo 'Current connection is already on 6GHz, no repair needed.'; exit 0; }
     case "$OPB_LINK_STATE" in wifi_off|hotspot_active|unknown|connected_band_unknown)
@@ -104,6 +103,12 @@ opb_repair_once() (
         absent|disabled) ;;
         *) echo 'Unable to confirm driver status, not executing reload.'; exit 75 ;;
     esac
+    opb_driver_reload_supported || {
+        rc=$?
+        echo "Driver repair check: ${OPB_RELOAD_REASON:-unknown} (service=${OPB_RELOAD_SERVICE:-unset}, rc=$rc)."
+        echo "timestamp=$(date +%s) source=$source event=$event state=preflight_blocked reason=${OPB_RELOAD_REASON:-unknown} service=${OPB_RELOAD_SERVICE:-unset} rc=$rc" > "$MODDIR/driver-init.status"
+        exit "$rc"
+    }
     now="$(opb_uptime)"; boot="$(opb_boot_id)"
     last_boot='' last_time=0 last_event=''
     if [ -r "$MODDIR/driver-repair.last" ]; then read -r last_boot last_time last_event < "$MODDIR/driver-repair.last"; fi
@@ -132,7 +137,7 @@ opb_repair_once() (
     fi
     state="$(get_6ghz_channel_state)"
     [ "$state" = enabled ] || rc=1
-    echo "source=$source event=$event reload_rc=$rc six_ghz=$state" > "$MODDIR/driver-init.status"
+    echo "timestamp=$(date +%s) source=$source event=$event reload_rc=$rc six_ghz=$state service=$(opb_getprop init.svc.wifiDriverReload)" > "$MODDIR/driver-init.status"
     cat "$MODDIR/driver-init.status"
     if [ "$rc" = 0 ]; then echo '6GHz drive capability has been restored; connection is determined by the system'; else echo 'This repair attempt was unsuccessful; automatic retries have been stopped'; fi
     exit "$rc"

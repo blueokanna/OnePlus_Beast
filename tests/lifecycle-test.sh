@@ -48,6 +48,7 @@ assert_eq "$CALLS" "$before" 'busy deferral cannot extend event window'
 
 # Exercise the actual repair transaction, mocking only OS operations.
 opb_boot_id() { echo boot1; }
+opb_getprop() { echo stopped; }
 opb_driver_reload_supported() { return 0; }
 opb_driver_reload_eligible() { return 0; }
 opb_probe_wifi_commands() { :; }

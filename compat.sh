@@ -257,13 +257,36 @@ opb_get_reg_country() {
     iw reg get 2>/dev/null | opb_parse_reg_country "$phy"
 }
 
+opb_has_driver_reload_service() {
+    awk '$1 == "service" && $2 == "wifiDriverReload" && $3 == "/odm/bin/wlan_ko_insmod.sh" && NF == 3 {found=1} END {exit !found}'
+}
+
+opb_driver_reload_files_present() {
+    [ -f /odm/bin/wlan_ko_insmod.sh ] || { OPB_RELOAD_REASON=vendor_script_missing; return 1; }
+    [ -f /vendor/lib/modules/qca_cld3_peach_v2.ko ] || { OPB_RELOAD_REASON=driver_file_missing; return 1; }
+    opb_has_driver_reload_service < /odm/etc/init/init.vendor.oplus.connectivity.rc 2>/dev/null || {
+        OPB_RELOAD_REASON=service_declaration_missing; return 1;
+    }
+}
+
+opb_driver_module_loaded() { [ -d /sys/module/qca_cld3_peach_v2 ]; }
+
 opb_driver_reload_supported() {
-    # Verified on PLK110/SM8850 only. Never guess a module name or use rmmod here.
-    [ "$(opb_getprop ro.product.model)" = PLK110 ] || return 1
-    [ "$(opb_getprop ro.soc.model)" = SM8850 ] || return 1
-    [ -d /sys/module/qca_cld3_peach_v2 ] || return 1
-    [ -f /odm/bin/wlan_ko_insmod.sh ] || return 1
-    [ "$(opb_getprop init.svc.wifiDriverReload)" = stopped ]
+    # Service state can be unset after boot. Verify the OEM declaration instead
+    # of mistaking an unpublished init.svc property for an unsupported device.
+    OPB_RELOAD_REASON=unknown
+    OPB_RELOAD_SERVICE="$(opb_getprop init.svc.wifiDriverReload)"
+    [ "$(opb_getprop ro.product.model)" = PLK110 ] || { OPB_RELOAD_REASON=model_mismatch; return 1; }
+    [ "$(opb_getprop ro.soc.model)" = SM8850 ] || { OPB_RELOAD_REASON=soc_mismatch; return 1; }
+    opb_driver_reload_files_present || return 1
+    case "$OPB_RELOAD_SERVICE" in
+        ''|stopped) ;;
+        running|restarting) OPB_RELOAD_REASON=service_busy; return 75 ;;
+        *) OPB_RELOAD_REASON=service_state_unknown; return 75 ;;
+    esac
+    opb_driver_module_loaded || { OPB_RELOAD_REASON=driver_not_loaded; return 75; }
+    OPB_RELOAD_REASON=ready
+    return 0
 }
 
 opb_driver_reload_eligible() {
@@ -284,9 +307,14 @@ opb_reload_vendor_driver() (
     setprop ctl.start wifiDriverReload || exit 1
     sleep 3
     n=0
-    while [ "$(opb_getprop init.svc.wifiDriverReload)" = running ] && [ "$n" -lt 20 ]; do
+    while [ "$n" -lt 20 ]; do
+        case "$(opb_getprop init.svc.wifiDriverReload)" in
+            stopped) exit 0 ;;
+            ''|running|restarting) ;;
+            *) exit 1 ;;
+        esac
         sleep 1
         n=$((n + 1))
     done
-    [ "$(opb_getprop init.svc.wifiDriverReload)" = stopped ]
+    exit 1
 )
