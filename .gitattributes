@@ -1,0 +1,3 @@
+*.sh text eol=lf
+*.prop text eol=lf
+META-INF/com/google/android/* text eol=lf

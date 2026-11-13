@@ -1,6 +1,8 @@
 #!/system/bin/sh
 
 MODDIR=${0%/*}
+. "${MODDIR}/compat.sh"
+opb_is_target_device || exit 0
 PID_FILE="${MODDIR}/wifi-heartbeat.pid"
 STATUS_FILE="${MODDIR}/wifi-heartbeat.status"
 LOG_FILE="${MODDIR}/wifi-heartbeat.log"
@@ -34,29 +36,7 @@ log_message() {
     fi
 }
 
-find_resetprop() {
-    local candidate=""
-
-    candidate="$(command -v resetprop 2>/dev/null)"
-    [ -n "$candidate" ] && {
-        echo "$candidate"
-        return
-    }
-
-    for candidate in \
-        /data/adb/magisk/resetprop \
-        /data/adb/ksu/bin/resetprop \
-        /data/adb/ap/bin/resetprop; do
-        [ -x "$candidate" ] && {
-            echo "$candidate"
-            return
-        }
-    done
-
-    echo ""
-}
-
-RESETPROP="$(find_resetprop)"
+RESETPROP="$(opb_find_resetprop)"
 
 set_runtime_prop() {
     local name="$1"
@@ -108,39 +88,6 @@ get_radio_signature() {
     echo "$(settings get global airplane_mode_on 2>/dev/null)|$(getprop gsm.sim.state)|$(getprop gsm.operator.numeric)|$(getprop gsm.operator.iso-country)"
 }
 
-get_6ghz_channel_state() {
-    local state=""
-
-    command -v iw >/dev/null 2>&1 || {
-        echo "unknown"
-        return
-    }
-
-    state="$(iw phy 2>/dev/null | awk '
-        /^Wiphy / { phy_seen = 1 }
-        /MHz/ {
-            phy_seen = 1
-            for (i = 1; i <= NF; i++) {
-                if ($i == "MHz") {
-                    freq = $(i - 1) + 0
-                    if (freq >= 5925 && freq <= 7125) {
-                        seen = 1
-                        if ($0 !~ /disabled/) enabled = 1
-                    }
-                }
-            }
-        }
-        END {
-            if (!phy_seen) print "unknown"
-            else if (enabled) print "enabled"
-            else if (seen) print "disabled"
-            else print "absent"
-        }
-    ')"
-
-    [ -n "$state" ] && echo "$state" || echo "unknown"
-}
-
 country_heartbeat() {
     set_runtime_prop wifi.country_code "$TARGET_CC"
     set_runtime_prop vendor.wifi.country_code "$TARGET_CC"
@@ -167,57 +114,40 @@ country_heartbeat() {
     fi
     command -v iw >/dev/null 2>&1 && iw reg set "$TARGET_CC" >/dev/null 2>&1
     command -v cmd >/dev/null 2>&1 && \
-        cmd wifi force-country-code enabled "$TARGET_CC" >/dev/null 2>&1
+        opb_wifi_cmd force-country-code enabled "$TARGET_CC" >/dev/null 2>&1
 }
 
 refresh_framework_state() {
     settings put global wifi_country_code "$TARGET_CC" >/dev/null 2>&1
     settings put global wifi_6ghz_support 1 >/dev/null 2>&1
-    cmd wifi reload-resources >/dev/null 2>&1
-    cmd wifi start-scan >/dev/null 2>&1
-}
-
-list_running_wifi_services() {
-    getprop 2>/dev/null | sed -n 's/^\[init\.svc\.\([^]]*\)\]: \[running\]$/\1/p' | \
-        while IFS= read -r service_name; do
-            case "$service_name" in
-                wificond|*wifi*hal*|*wifi_hal*)
-                    echo "$service_name"
-                    ;;
-            esac
-        done
-}
-
-restart_wifi_services() {
-    local services="$1"
-    local service_name=""
-
-    for service_name in $services; do
-        setprop ctl.restart "$service_name" >/dev/null 2>&1
-    done
-    sleep 1
+    opb_wifi_cmd reload-resources >/dev/null 2>&1
+    opb_wifi_cmd start-scan >/dev/null 2>&1
 }
 
 hard_recover_wifi() {
     local reason="$1"
     local wifi_was_on=""
-    local running_services=""
 
     wifi_was_on="$(is_wifi_enabled)"
-    running_services="$(list_running_wifi_services)"
     log_message "hard recovery reason=${reason} wifi_on=${wifi_was_on}"
 
-    cmd wifi force-country-code disabled >/dev/null 2>&1
+    opb_wifi_cmd force-country-code disabled >/dev/null 2>&1
     country_heartbeat
     refresh_framework_state
 
     [ "$wifi_was_on" = "1" ] || return
 
-    svc wifi disable >/dev/null 2>&1
+    # Let the framework manage AIDL/HIDL HAL lifecycle on current ROMs.
+    opb_set_wifi_enabled disabled >/dev/null 2>&1 || {
+        log_message "hard recovery skipped: cannot disable Wi-Fi"
+        return 1
+    }
     sleep 2
-    restart_wifi_services "$running_services"
     country_heartbeat
-    svc wifi enable >/dev/null 2>&1
+    opb_set_wifi_enabled enabled >/dev/null 2>&1 || {
+        log_message "hard recovery failed: cannot enable Wi-Fi"
+        return 1
+    }
     sleep 4
     country_heartbeat
     refresh_framework_state
@@ -229,7 +159,7 @@ probe_runtime_support() {
     local iw_rc=127
 
     if command -v cmd >/dev/null 2>&1; then
-        cmd wifi force-country-code enabled "$TARGET_CC" >/dev/null 2>&1
+        opb_wifi_cmd force-country-code enabled "$TARGET_CC" >/dev/null 2>&1
         force_rc=$?
     fi
     if command -v iw >/dev/null 2>&1; then
@@ -243,10 +173,12 @@ until [ "$(getprop sys.boot_completed)" = "1" ]; do
     sleep 2
 done
 
+opb_probe_wifi_commands
+
 INTERVAL="$(get_interval)"
 COOLDOWN="$(get_cooldown)"
 LAST_SIGNATURE="$(get_radio_signature)"
-PENDING_EVENT=3
+PENDING_EVENT=-1
 BAD_STREAK=0
 PULSE_COUNT=0
 LAST_RECOVERY=0
@@ -261,7 +193,7 @@ log_message "heartbeat started interval=${INTERVAL}s cooldown=${COOLDOWN}s reset
 probe_runtime_support
 
 while [ "$(getprop persist.sys.opb.6ghz.heartbeat)" != "0" ]; do
-    NOW="$(date +%s 2>/dev/null)"
+    NOW="$(cut -d. -f1 /proc/uptime 2>/dev/null)"
     case "$NOW" in
         ''|*[!0-9]*) NOW=0 ;;
     esac
@@ -275,6 +207,9 @@ while [ "$(getprop persist.sys.opb.6ghz.heartbeat)" != "0" ]; do
         PENDING_EVENT=$((PENDING_EVENT - 1))
     fi
 
+    if [ $((PULSE_COUNT % 15)) -eq 0 ]; then
+        opb_probe_wifi_commands
+    fi
     country_heartbeat
     PULSE_COUNT=$((PULSE_COUNT + 1))
     if [ $((PULSE_COUNT % 15)) -eq 0 ]; then
@@ -292,21 +227,21 @@ while [ "$(getprop persist.sys.opb.6ghz.heartbeat)" != "0" ]; do
         *) BAD_STREAK=0 ;;
     esac
 
-    if [ "$PENDING_EVENT" -eq 0 ]; then
-        hard_recover_wifi "radio-transition"
+    if opb_recovery_due "$PENDING_EVENT" "$BAD_STREAK" "$NOW" "$LAST_RECOVERY" "$COOLDOWN"; then
+        if [ "$PENDING_EVENT" -eq 0 ]; then
+            hard_recover_wifi "radio-transition"
+        else
+            hard_recover_wifi "channel-${CHANNEL_STATE}"
+        fi
         LAST_RECOVERY="$NOW"
         PENDING_EVENT=-1
-        BAD_STREAK=0
-    elif [ "$BAD_STREAK" -ge 3 ] && [ $((NOW - LAST_RECOVERY)) -ge "$COOLDOWN" ]; then
-        hard_recover_wifi "channel-${CHANNEL_STATE}"
-        LAST_RECOVERY="$NOW"
         BAD_STREAK=0
     fi
 
     if [ $((PULSE_COUNT % 15)) -eq 0 ]; then
         REG_CC="$(iw reg get 2>/dev/null | awk '/country/{print $2; exit}' | tr -d ':')"
         PROP_CC="$(getprop persist.vendor.wifi.country_code)"
-        echo "timestamp=${NOW} country=${TARGET_CC} prop_country=${PROP_CC} reg_country=${REG_CC} six_ghz=${CHANNEL_STATE} signature=${SIGNATURE}" > "$STATUS_FILE"
+        echo "timestamp=$(date +%s) uptime_seconds=${NOW} country=${TARGET_CC} prop_country=${PROP_CC} reg_country=${REG_CC} six_ghz=${CHANNEL_STATE} signature=${SIGNATURE}" > "$STATUS_FILE"
     fi
 
     sleep "$INTERVAL"

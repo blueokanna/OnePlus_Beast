@@ -1,6 +1,6 @@
 id=oneplus_global_wifi_beast
 name=OnePlus Universal Wi-Fi Beast
-version=v2.3_6GHz_Heartbeat
-versionCode=230
+version=v2.4_Android17
+versionCode=240
 author=blueokanna
-description=2-second 6 GHz heartbeat and debounced cellular-state recovery for OnePlus/Qualcomm; no partition file writes.
+description=OnePlus 15 / Android 17 compatibility, adaptive Wi-Fi commands and cfg discovery, rate-limited 6 GHz recovery; no kernel replacement or partition file writes.

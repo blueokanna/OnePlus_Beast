@@ -11,6 +11,34 @@
 - 默认强制 US 地区
 - 启用 6GHz、Wi-Fi 7、MLO、热点 6GHz 等能力
 
+### 一加 15 / Android 17 适配（v2.4）
+
+本次适配目标是 **OnePlus 15 + Android 17**，用户提供的内核为
+`6.12.69-android16-6-g5fd39602326e-ab16372235-4k`。
+这是脚本模块，不包含 `.ko`、不替换内核，也不绑定某个内核提交或 OTA 构建号。
+系统版本从 `ro.build.version.release` / `ro.build.version.sdk` 读取，内核版本从 `uname -r` 读取，页大小从 `getconf PAGESIZE` 读取。
+内核名中的 `android16` 标识内核分支，不用于判断当前 Android 系统版本；参见 [AOSP 内核分支说明](https://source.android.com/docs/core/architecture/kernel/android-common)。
+
+- 安装时发现 Wi-Fi 配置及芯片子目录，为每个文件单独生成覆盖副本；符号链接复制为普通文件，避免修改原文件。
+- 配置项写在 `END` 之前，兼容键名周围空白和重复键。
+- 根据设备实际的 `cmd wifi help` 探测可用命令；早期开机阶段不调用 Wi-Fi Binder 服务。
+- 恢复通过框架开关 Wi-Fi，不按猜测的服务名重启 HAL；蜂窝变化和信道丢失共用冷却时间，启动时不再无条件重启 Wi-Fi。
+- `iw` 查询失败记为 `unknown`，单网卡 MLO 的 5GHz 观测不再单独触发 6GHz 链路修复。
+
+安装并重启后，可在 root shell 中查看：
+
+```sh
+cat /data/adb/modules/oneplus_global_wifi_beast/compatibility.status
+cat /data/adb/modules/oneplus_global_wifi_beast/xml/overlays.list
+cat /data/adb/modules/oneplus_global_wifi_beast/wifi-heartbeat.status
+logcat -d -s OnePlusBeast OnePlusBeastHB
+```
+
+`compatibility.status` 记录机型、系统、内核、页大小、工具及命令可用性；命令存在不代表驱动已接受配置。
+没有 WCNSS 文件的 ROM 会跳过配置覆盖，没有 `iw` 时无法确认 PHY 的 6GHz 信道状态。
+**当前验证范围是本地 Shell 语法和模拟回归测试，尚未在该设备/固件上实测。**
+6GHz、MLO 和热点效果需要结合真机日志、驱动和路由器验证，写入属性本身不代表功能已生效。
+
 ### 核心特性
 
 #### 1. 国家码与区域策略
@@ -75,12 +103,12 @@
 它主要通过三层方式工作：
 
 1. `customize.sh`
-   - 在安装阶段从 `/odm/vendor/etc/wifi/` 或 `/vendor/etc/wifi/` 提取 `WCNSS_qcom_cfg.ini`
-   - 将补丁写入模块目录下的 `xml/WCNSS_qcom_cfg.ini`
+   - 在安装阶段扫描 `/odm/vendor/etc/wifi/`、`/odm/etc/wifi/`、`/vendor/etc/wifi/`、`/vendor/firmware/wlan/`、`/mnt/vendor/persist/wlan/` 下的 `WCNSS_qcom_cfg.ini`
+   - 将补丁写入模块目录下的 `xml/cfg_*.ini`，用 `xml/overlays.list` 记录目标路径
    - 对缺失键执行补写，对已有键执行替换
 
 2. `post-fs-data.sh`
-   - 在开机早期把模块里的 `xml/WCNSS_qcom_cfg.ini` bind mount 到系统实际 Wi-Fi cfg 路径
+   - 在开机早期按清单把模块里的配置副本 bind mount 到对应 Wi-Fi cfg 路径，并记录挂载结果
    - 注入关键属性，使 Wi-Fi 框架尽早读取到模块配置
 
 3. `service.sh`
@@ -124,7 +152,7 @@
 - `persist.sys.opb.6ghz.heartbeat_interval`
   - 默认 `2` 秒，可设置范围为 `1` 到 `10`
 - `persist.sys.opb.6ghz.recovery_cooldown`
-  - 6GHz 信道持续丢失时，硬恢复的最短间隔，默认 `60` 秒
+  - 蜂窝状态变化或 6GHz 信道持续丢失时，恢复共用的最短间隔，默认 `60` 秒
 
 ### 重要说明
 
@@ -166,6 +194,7 @@
 ### 文件说明
 
 - [customize.sh](customize.sh)
+- [compat.sh](compat.sh)
 - [post-fs-data.sh](post-fs-data.sh)
 - [service.sh](service.sh)
 - [wifi-heartbeat.sh](wifi-heartbeat.sh)
@@ -178,6 +207,26 @@
 ### Overview
 This is a KSU/Magisk Wi-Fi module for OnePlus 11 and later OnePlus numeric flagship / Ace series devices.
 It aims to enhance Wi-Fi behavior **without modifying the system partition**, using runtime properties, Wi-Fi cfg overlay, and service-side enforcement.
+
+### OnePlus 15 / Android 17 compatibility (v2.4)
+
+Target: OnePlus 15 running Android 17 with the reported kernel
+`6.12.69-android16-6-g5fd39602326e-ab16372235-4k`.
+This is a shell module, with no kernel replacement or `.ko` dependency. Android release/SDK,
+kernel release and page size are detected independently; the kernel branch is not used as
+the userspace Android version. OTA build hashes are not pinned.
+
+The installer discovers per-chipset WCNSS files, copies symlink targets into independent
+overlays and places settings before `END`. Runtime commands are selected from the device's
+`cmd wifi help`. Recovery uses framework Wi-Fi toggles, shares a cooldown across radio and
+channel events, and does not restart Wi-Fi unconditionally at startup. Failed PHY queries
+remain unknown, and a single 5 GHz netdev does not imply a stalled 6 GHz MLO link.
+
+Read `compatibility.status`, `xml/overlays.list` and `wifi-heartbeat.status` in the installed
+module directory, plus `logcat -s OnePlusBeast OnePlusBeastHB`, to inspect the actual device.
+Missing WCNSS files skip overlays; missing `iw` leaves PHY state unknown. Command availability
+and property writes do not prove firmware support. **Validated locally with shell syntax and
+mock regression tests only; this device/firmware has not yet been tested.**
 
 ### Core Goals
 
@@ -255,8 +304,8 @@ This combination is not random tuning; it is intentionally built in the order of
 The module avoids modifying the system partition and works in three stages:
 
 1. `customize.sh`
-   - Extracts `WCNSS_qcom_cfg.ini` from `/odm/vendor/etc/wifi/` or `/vendor/etc/wifi/`
-   - Writes a patched copy to `xml/WCNSS_qcom_cfg.ini`
+   - Discovers `WCNSS_qcom_cfg.ini` in ODM/vendor Wi-Fi, vendor WLAN firmware and persist WLAN directories, including chipset subdirectories
+   - Writes independent patched copies to `xml/cfg_*.ini` and records targets in `xml/overlays.list`
    - Replaces existing keys and appends missing keys when needed
 
 2. `post-fs-data.sh`
@@ -300,7 +349,7 @@ The module avoids modifying the system partition and works in three stages:
 - `persist.sys.opb.6ghz.heartbeat_interval`
   - Heartbeat interval in seconds, clamped from `1` to `10`; default `2`
 - `persist.sys.opb.6ghz.recovery_cooldown`
-  - Minimum hard-recovery interval while 6GHz channels stay unavailable; default `60`
+  - Shared minimum recovery interval for radio transitions and unavailable 6GHz channels; default `60`
 
 ### Important Notes
 

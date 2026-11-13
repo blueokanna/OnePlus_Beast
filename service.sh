@@ -2,11 +2,9 @@
 
 MODDIR=${0%/*}
 
-# Keep the fast country/6 GHz watchdog independent from the heavier policy loop.
-if [ "$(getprop persist.sys.opb.6ghz.heartbeat)" != "0" ] && \
-    [ -f "${MODDIR}/wifi-heartbeat.sh" ]; then
-    sh "${MODDIR}/wifi-heartbeat.sh" >/dev/null 2>&1 &
-fi
+. "${MODDIR}/compat.sh"
+opb_is_target_device || exit 0
+RESETPROP="$(opb_find_resetprop)"
 
 until [ "$(getprop sys.boot_completed)" = "1" ]; do
     sleep 2
@@ -136,22 +134,22 @@ pick_dynamic_country() {
 set_country_props() {
     local cc="$1"
     [ "$(is_valid_cc "$cc")" = "1" ] || cc="00"
-    resetprop wifi.country_code "$cc"
-    resetprop vendor.wifi.country_code "$cc"
-    resetprop persist.sys.wifi.country_code "$cc"
-    resetprop persist.vendor.wifi.country_code "$cc"
-    resetprop persist.sys.wifi.default_country_code "$cc"
-    resetprop persist.vendor.wifi.default_country_code "$cc"
-    resetprop wlan.driver.country "$cc"
-    resetprop vendor.wlan.country_code "$cc"
-    resetprop vendor.wifi.ap_country_code "$cc"
+    opb_resetprop wifi.country_code "$cc"
+    opb_resetprop vendor.wifi.country_code "$cc"
+    opb_resetprop persist.sys.wifi.country_code "$cc"
+    opb_resetprop persist.vendor.wifi.country_code "$cc"
+    opb_resetprop persist.sys.wifi.default_country_code "$cc"
+    opb_resetprop persist.vendor.wifi.default_country_code "$cc"
+    opb_resetprop wlan.driver.country "$cc"
+    opb_resetprop vendor.wlan.country_code "$cc"
+    opb_resetprop vendor.wifi.ap_country_code "$cc"
 
     # A hard country lock must not leave a second dynamic path for telephony MCC.
-    resetprop persist.vendor.wifi.dynamic_regdom 0
-    resetprop persist.sys.wifi.dynamic_regdom 0
-    resetprop persist.vendor.wifi.world_mode 0
-    resetprop persist.vendor.wlan.global_regdom_mode 0
-    resetprop persist.vendor.wifi.allow_11d 0
+    opb_resetprop persist.vendor.wifi.dynamic_regdom 0
+    opb_resetprop persist.sys.wifi.dynamic_regdom 0
+    opb_resetprop persist.vendor.wifi.world_mode 0
+    opb_resetprop persist.vendor.wlan.global_regdom_mode 0
+    opb_resetprop persist.vendor.wifi.allow_11d 0
 }
 
 enforce_country_runtime() {
@@ -159,7 +157,7 @@ enforce_country_runtime() {
     [ "$(is_valid_cc "$cc")" = "1" ] || return 0
 
     # Follow AndroPlus style: keep boot country and runtime country in sync.
-    resetprop -n ro.boot.wificountrycode "$cc"
+    opb_resetprop -n ro.boot.wificountrycode "$cc"
     set_country_props "$cc"
 
     if command -v settings >/dev/null 2>&1; then
@@ -171,73 +169,73 @@ enforce_country_runtime() {
     fi
 
     if command -v cmd >/dev/null 2>&1; then
-        cmd wifi force-country-code enabled "$cc" >/dev/null 2>&1
+        opb_wifi_cmd force-country-code enabled "$cc" >/dev/null 2>&1
     fi
 }
 
 set_feature_props() {
-    resetprop persist.vendor.wifi.softap_6ghz_supported 1
-    resetprop persist.vendor.wifi.softap_6ghz_enabled 1
-    resetprop persist.vendor.wifi.softap.bridge_mode_supported 1
-    resetprop persist.vendor.wifi.wifi7_enabled 1
-    resetprop persist.vendor.wifi.eht_enabled 1
-    resetprop persist.vendor.wifi.mlo_supported 1
-    resetprop persist.vendor.wifi.mlo_enabled 1
-    resetprop persist.vendor.wifi.mlo_softap_supported 1
-    resetprop persist.vendor.wifi.mlo_sta_supported 1
-    resetprop persist.vendor.wifi.mlo_link_stats_enabled 1
-    resetprop persist.vendor.wifi.mlo_link_debug_visible 1
-    resetprop persist.sys.wifi.softap_6ghz_supported 1
-    resetprop persist.sys.wifi.mlo_supported 1
-    resetprop persist.sys.wifi.mlo_enabled 1
-    resetprop persist.sys.wifi.mlo_link_stats_enabled 1
-    resetprop persist.sys.wifi.mlo_display_fix 1
-    resetprop persist.sys.wifi.wifi7_profile 1
-    resetprop persist.sys.oplus.wifi6ghz.support 1
-    resetprop persist.sys.oplus.softap6ghz.support 1
-    resetprop persist.sys.oplus.wifi.mlo.support 1
-    resetprop persist.sys.oplus.wifi.mlo.display_fix 1
-    resetprop persist.vendor.oplus.wifi6ghz.support 1
-    resetprop persist.vendor.oplus.softap6ghz.support 1
-    resetprop persist.vendor.oplus.wifi.mlo.support 1
-    resetprop persist.vendor.oplus.wifi.mlo.display_fix 1
-    resetprop persist.vendor.wifi.dual_ap_supported 1
-    resetprop persist.vendor.wifi.bridged_ap_supported 1
-    resetprop persist.vendor.wifi.acs_supported 1
-    resetprop persist.vendor.wifi.dbs_supported 1
-    resetprop persist.vendor.wifi.multi_band_scan_supported 1
-    resetprop persist.vendor.wifi.txpower.dynamic_mode 1
-    resetprop persist.vendor.wifi.txpower.target_ratio 100
-    resetprop persist.vendor.wifi.txpower.balance_profile au_1000mw_safety
-    resetprop persist.sys.opb.txpower.max_mbm 3000
-    resetprop persist.sys.opb.txpower.target_ratio 100
-    resetprop persist.sys.opb.jp_channel_compat 1
-    resetprop persist.sys.opb.hotspot_6ghz_force 1
-    resetprop persist.sys.opb.rf_safety_mode 1
-    resetprop persist.vendor.wifi.allow_channel_14 1
-    resetprop persist.vendor.wifi.allow_channel_144 1
-    resetprop persist.sys.wifi.allow_channel_14 1
-    resetprop persist.sys.wifi.allow_channel_144 1
-    resetprop persist.vendor.wifi.jp_channels_compat 1
-    resetprop persist.vendor.wifi.rx_gain_safety_mode 1
+    opb_resetprop persist.vendor.wifi.softap_6ghz_supported 1
+    opb_resetprop persist.vendor.wifi.softap_6ghz_enabled 1
+    opb_resetprop persist.vendor.wifi.softap.bridge_mode_supported 1
+    opb_resetprop persist.vendor.wifi.wifi7_enabled 1
+    opb_resetprop persist.vendor.wifi.eht_enabled 1
+    opb_resetprop persist.vendor.wifi.mlo_supported 1
+    opb_resetprop persist.vendor.wifi.mlo_enabled 1
+    opb_resetprop persist.vendor.wifi.mlo_softap_supported 1
+    opb_resetprop persist.vendor.wifi.mlo_sta_supported 1
+    opb_resetprop persist.vendor.wifi.mlo_link_stats_enabled 1
+    opb_resetprop persist.vendor.wifi.mlo_link_debug_visible 1
+    opb_resetprop persist.sys.wifi.softap_6ghz_supported 1
+    opb_resetprop persist.sys.wifi.mlo_supported 1
+    opb_resetprop persist.sys.wifi.mlo_enabled 1
+    opb_resetprop persist.sys.wifi.mlo_link_stats_enabled 1
+    opb_resetprop persist.sys.wifi.mlo_display_fix 1
+    opb_resetprop persist.sys.wifi.wifi7_profile 1
+    opb_resetprop persist.sys.oplus.wifi6ghz.support 1
+    opb_resetprop persist.sys.oplus.softap6ghz.support 1
+    opb_resetprop persist.sys.oplus.wifi.mlo.support 1
+    opb_resetprop persist.sys.oplus.wifi.mlo.display_fix 1
+    opb_resetprop persist.vendor.oplus.wifi6ghz.support 1
+    opb_resetprop persist.vendor.oplus.softap6ghz.support 1
+    opb_resetprop persist.vendor.oplus.wifi.mlo.support 1
+    opb_resetprop persist.vendor.oplus.wifi.mlo.display_fix 1
+    opb_resetprop persist.vendor.wifi.dual_ap_supported 1
+    opb_resetprop persist.vendor.wifi.bridged_ap_supported 1
+    opb_resetprop persist.vendor.wifi.acs_supported 1
+    opb_resetprop persist.vendor.wifi.dbs_supported 1
+    opb_resetprop persist.vendor.wifi.multi_band_scan_supported 1
+    opb_resetprop persist.vendor.wifi.txpower.dynamic_mode 1
+    opb_resetprop persist.vendor.wifi.txpower.target_ratio 100
+    opb_resetprop persist.vendor.wifi.txpower.balance_profile au_1000mw_safety
+    opb_resetprop persist.sys.opb.txpower.max_mbm 3000
+    opb_resetprop persist.sys.opb.txpower.target_ratio 100
+    opb_resetprop persist.sys.opb.jp_channel_compat 1
+    opb_resetprop persist.sys.opb.hotspot_6ghz_force 1
+    opb_resetprop persist.sys.opb.rf_safety_mode 1
+    opb_resetprop persist.vendor.wifi.allow_channel_14 1
+    opb_resetprop persist.vendor.wifi.allow_channel_144 1
+    opb_resetprop persist.sys.wifi.allow_channel_14 1
+    opb_resetprop persist.sys.wifi.allow_channel_144 1
+    opb_resetprop persist.vendor.wifi.jp_channels_compat 1
+    opb_resetprop persist.vendor.wifi.rx_gain_safety_mode 1
 
     # WiFi8-like profile switches (best-effort, vendor support dependent).
-    resetprop persist.sys.opb.wifi8.mode 1
-    resetprop persist.sys.opb.wifi8.coordinated_twt 1
-    resetprop persist.sys.opb.wifi8.multi_ap_coordination 1
-    resetprop persist.sys.opb.wifi8.ofdma_multi_ru 1
-    resetprop persist.sys.opb.wifi8.dso_npca 1
-    resetprop persist.sys.opb.wifi8.dru_scheduler 1
-    resetprop persist.vendor.wifi.twt_coordinated_enabled 1
-    resetprop persist.vendor.wifi.multi_ap_coordination_enabled 1
-    resetprop persist.vendor.wifi.ofdma_multi_ru_enabled 1
-    resetprop persist.vendor.wifi.dso_enabled 1
-    resetprop persist.vendor.wifi.npca_enabled 1
-    resetprop persist.vendor.wifi.dru_scheduler_enabled 1
-    resetprop persist.vendor.wifi.ul_dl_mu_mimo_optimized 1
-    resetprop persist.vendor.wifi.mlo_link_aggregation_enabled 1
-    resetprop persist.vendor.wifi.roaming_scan_aggressive 1
-    resetprop persist.vendor.wifi.latency_critical_path 1
+    opb_resetprop persist.sys.opb.wifi8.mode 1
+    opb_resetprop persist.sys.opb.wifi8.coordinated_twt 1
+    opb_resetprop persist.sys.opb.wifi8.multi_ap_coordination 1
+    opb_resetprop persist.sys.opb.wifi8.ofdma_multi_ru 1
+    opb_resetprop persist.sys.opb.wifi8.dso_npca 1
+    opb_resetprop persist.sys.opb.wifi8.dru_scheduler 1
+    opb_resetprop persist.vendor.wifi.twt_coordinated_enabled 1
+    opb_resetprop persist.vendor.wifi.multi_ap_coordination_enabled 1
+    opb_resetprop persist.vendor.wifi.ofdma_multi_ru_enabled 1
+    opb_resetprop persist.vendor.wifi.dso_enabled 1
+    opb_resetprop persist.vendor.wifi.npca_enabled 1
+    opb_resetprop persist.vendor.wifi.dru_scheduler_enabled 1
+    opb_resetprop persist.vendor.wifi.ul_dl_mu_mimo_optimized 1
+    opb_resetprop persist.vendor.wifi.mlo_link_aggregation_enabled 1
+    opb_resetprop persist.vendor.wifi.roaming_scan_aggressive 1
+    opb_resetprop persist.vendor.wifi.latency_critical_path 1
 }
 
 set_wifi8_like_settings() {
@@ -266,76 +264,6 @@ warmup_country_lock() {
         n=$((n + 1))
         sleep 3
     done
-}
-
-get_6ghz_channel_state() {
-    local state=""
-
-    command -v iw >/dev/null 2>&1 || {
-        echo "unknown"
-        return
-    }
-
-    state="$(iw phy 2>/dev/null | awk '
-        /^Wiphy / { phy_seen = 1 }
-        /MHz/ {
-            phy_seen = 1
-            for (i = 1; i <= NF; i++) {
-                if ($i == "MHz") {
-                    freq = $(i - 1) + 0
-                    if (freq >= 5925 && freq <= 7125) {
-                        seen = 1
-                        if ($0 !~ /disabled/) enabled = 1
-                    }
-                }
-            }
-        }
-        END {
-            if (!phy_seen) print "unknown"
-            else if (enabled) print "enabled"
-            else if (seen) print "disabled"
-            else print "absent"
-        }
-    ')"
-
-    [ -n "$state" ] && echo "$state" || echo "unknown"
-}
-
-ensure_ace_target_device() {
-    local brand manufacturer soc model product
-    brand="$(getprop ro.product.brand | tr '[:upper:]' '[:lower:]')"
-    manufacturer="$(getprop ro.product.manufacturer | tr '[:upper:]' '[:lower:]')"
-    soc="$(getprop ro.soc.manufacturer | tr '[:upper:]' '[:lower:]')"
-    model="$(getprop ro.product.model | tr '[:upper:]' '[:lower:]')"
-    product="$(getprop ro.product.name | tr '[:upper:]' '[:lower:]')"
-
-    case "$brand$manufacturer" in
-        *oneplus*|*oppo*)
-            ;;
-        *)
-            logi "Non-OnePlus/OPPO device detected, module keeps passive mode"
-            return 1
-            ;;
-    esac
-
-    case "$soc" in
-        *qcom*|*qualcomm*|'')
-            ;;
-        *)
-            logi "Non-Qualcomm platform detected, module keeps passive mode"
-            return 1
-            ;;
-    esac
-
-    case "$model$product" in
-        *ace*|*pk*|*pj*|*pl*|*ph*|*oneplus11*|*oneplus12*|*oneplus13*)
-            return 0
-            ;;
-        *)
-            # Keep enabled for new OnePlus Qualcomm models as forward compatible default.
-            return 0
-            ;;
-    esac
 }
 
 get_thermal_max_millic() {
@@ -574,7 +502,7 @@ heal_unstable_links() {
     local iface=""
 
     if command -v cmd >/dev/null 2>&1; then
-        cmd wifi start-scan >/dev/null 2>&1
+        opb_wifi_cmd start-scan >/dev/null 2>&1
     fi
 
     for iface in $(get_wifi_ifaces); do
@@ -591,19 +519,21 @@ assess_mlo_balance() {
     local rate="0"
     local max5="0"
     local max6="0"
+    local seen6=0
 
     for iface in $(get_wifi_ifaces); do
         freq="$(get_interface_freq_mhz "$iface")"
         rate="$(get_interface_txrate_mbps "$iface")"
         if [ "$freq" -ge 5925 ] && [ "$freq" -le 7125 ]; then
+            seen6=1
             [ "$rate" -gt "$max6" ] && max6="$rate"
         elif [ "$freq" -ge 4900 ] && [ "$freq" -le 5895 ]; then
             [ "$rate" -gt "$max5" ] && max5="$rate"
         fi
     done
 
-    # Return 1 when 6 GHz is effectively stalled but 5 GHz is very high.
-    if [ "$max5" -ge 900 ] && [ "$max6" -le 20 ]; then
+    # Modern MLO can expose one netdev. A 5 GHz-only observation is not a stalled 6 GHz link.
+    if [ "$seen6" -eq 1 ] && [ "$max5" -ge 900 ] && [ "$max6" -le 20 ]; then
         echo 1
     else
         echo 0
@@ -612,8 +542,8 @@ assess_mlo_balance() {
 
 rebalance_mlo_links() {
     local iface=""
-    resetprop persist.vendor.wifi.mlo_rebalance_request 1
-    resetprop persist.sys.wifi.mlo_rebalance_request 1
+    opb_resetprop persist.vendor.wifi.mlo_rebalance_request 1
+    opb_resetprop persist.sys.wifi.mlo_rebalance_request 1
 
     for iface in $(get_wifi_ifaces); do
         iw dev "$iface" set power_save off >/dev/null 2>&1
@@ -623,16 +553,23 @@ rebalance_mlo_links() {
     done
 
     if command -v cmd >/dev/null 2>&1; then
-        cmd wifi reload-resources >/dev/null 2>&1
+        opb_wifi_cmd reload-resources >/dev/null 2>&1
     fi
 
     sleep 2
-    resetprop persist.vendor.wifi.mlo_rebalance_request 0
-    resetprop persist.sys.wifi.mlo_rebalance_request 0
+    opb_resetprop persist.vendor.wifi.mlo_rebalance_request 0
+    opb_resetprop persist.sys.wifi.mlo_rebalance_request 0
 }
 
-if ! ensure_ace_target_device; then
-    exit 0
+opb_detect_platform
+opb_probe_wifi_commands
+opb_write_compat_report
+logi "platform=$OPB_PROFILE android=$OPB_ANDROID sdk=$OPB_SDK kernel=$OPB_KERNEL page_size=$OPB_PAGE_SIZE"
+
+# Start the watchdog only after checking the device and waiting for boot.
+if [ "$(getprop persist.sys.opb.6ghz.heartbeat)" != "0" ] && \
+    [ -f "${MODDIR}/wifi-heartbeat.sh" ]; then
+    sh "${MODDIR}/wifi-heartbeat.sh" >/dev/null 2>&1 &
 fi
 
 # Resolve the configured country; hard-lock mode returns US before any dynamic source.
@@ -666,6 +603,7 @@ enforce_country_runtime "$CC_NOW"
 MLO_BAD_STREAK=0
 LINK_BAD_STREAK=0
 while true; do
+    opb_probe_wifi_commands
     TARGET_CC="$(pick_dynamic_country)"
     CUR_CC="$(normalize_cc "$(getprop persist.vendor.wifi.country_code)")"
     SCREEN_ON="$(is_screen_on)"

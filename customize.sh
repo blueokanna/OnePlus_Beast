@@ -3,9 +3,14 @@
 REPLACE="
 "
 
-WIFICFG="WCNSS_qcom_cfg.ini"
 XMLDIR="${MODPATH}/xml"
 TARGET_CC="US"
+
+. "${MODPATH}/compat.sh"
+opb_detect_platform
+opb_is_target_device || abort "! OnePlus/OPPO Qualcomm device required"
+ui_print "- Device: ${OPB_MODEL}; Android ${OPB_ANDROID} (SDK ${OPB_SDK})"
+ui_print "- Kernel: ${OPB_KERNEL}; page size: ${OPB_PAGE_SIZE:-unknown}"
 
 ui_print "- OnePlus Beast customize: preparing Wi-Fi cfg patches"
 mkdir -p "${XMLDIR}"
@@ -14,11 +19,7 @@ set_or_append() {
 	local file="$1"
 	local key="$2"
 	local value="$3"
-	if grep -q "^${key}=" "$file"; then
-		sed -i "s@^${key}=.*@${key}=${value}@g" "$file"
-	else
-		echo "${key}=${value}" >> "$file"
-	fi
+	opb_set_cfg_key "$file" "$key" "$value" || abort "! Failed to patch ${key}"
 }
 
 patch_cfg_file() {
@@ -68,19 +69,34 @@ prepare_cfg_overlay() {
 	local source="$1"
 	local overlay="$2"
 
-	[ -e "$source" ] || return 1
+	[ -f "$source" ] && [ -r "$source" ] || return 1
 	ui_print "  - Found ${source}"
-	cp -af "$source" "${XMLDIR}/${overlay}"
+	# Dereference links: cp -a could leave a link back into vendor/persist.
+	[ ! -L "${XMLDIR}/${overlay}" ] || abort "! Overlay must be a regular file"
+	cp -pL "$source" "${XMLDIR}/${overlay}" || abort "! Cannot copy ${source}"
+	[ ! -L "${XMLDIR}/${overlay}" ] || abort "! Overlay must be a regular file"
+	# Normalize CRLF before parsing END and keys.
+	sed -i 's/\r$//' "${XMLDIR}/${overlay}"
 	patch_cfg_file "${XMLDIR}/${overlay}"
+	printf '%s|%s\n' "$overlay" "$source" >> "${XMLDIR}/overlays.list"
 }
 
 CFG_FOUND=0
-prepare_cfg_overlay "/odm/vendor/etc/wifi/${WIFICFG}" "odm_${WIFICFG}" && CFG_FOUND=1
-prepare_cfg_overlay "/vendor/etc/wifi/${WIFICFG}" "vendor_${WIFICFG}" && CFG_FOUND=1
-prepare_cfg_overlay "/mnt/vendor/persist/wlan/${WIFICFG}" "persist_${WIFICFG}" && CFG_FOUND=1
+: > "${XMLDIR}/overlays.list"
+opb_find_cfg_sources > "${XMLDIR}/sources.list"
+while IFS= read -r CFG_SOURCE; do
+	# A numeric filename cannot collide across partitions or chipset directories.
+	prepare_cfg_overlay "$CFG_SOURCE" "cfg_${CFG_FOUND}.ini" && CFG_FOUND=$((CFG_FOUND + 1))
+done < "${XMLDIR}/sources.list"
+rm -f "${XMLDIR}/sources.list"
 
 if [ "$CFG_FOUND" -eq 0 ]; then
 	ui_print "  - WCNSS cfg not found, skip cfg overlay"
 fi
+
+set_perm_recursive "$MODPATH" 0 0 0755 0644
+for SCRIPT in post-fs-data.sh service.sh wifi-heartbeat.sh; do
+	set_perm "$MODPATH/$SCRIPT" 0 0 0755
+done
 
 ui_print "- customize done (partition files were not modified)"

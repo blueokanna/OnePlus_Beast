@@ -22,6 +22,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Check shell compatibility
+        shell: bash
+        run: |
+          for script in *.sh tests/*.sh META-INF/com/google/android/update-binary; do
+            bash -n "$script"
+          done
+          bash tests/compat-test.sh
+
       - name: Read module metadata
         id: meta
         shell: bash
@@ -63,6 +71,9 @@ jobs:
           zip -r9 "out/${{ steps.meta.outputs.zip_name }}" . \
             -x ".git/*" \
                ".github/*" \
+               "tests/*" \
+               ".gitignore" \
+               ".gitattributes" \
                "out/*" \
                "*.zip" \
                "*.DS_Store"
