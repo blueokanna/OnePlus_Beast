@@ -237,9 +237,51 @@ get_6ghz_channel_state() {
     '
 }
 
-opb_recovery_due() {
-    # Both cellular events and channel loss share the same rate limit.
-    [ "$3" -gt 0 ] || return 1
-    [ "$1" -eq 0 ] || [ "$2" -ge 3 ] || return 1
-    [ "$4" -eq 0 ] || [ $(( $3 - $4 )) -ge "$5" ]
+opb_parse_reg_country() {
+    awk -v wanted="phy#$1" '
+        /^global/ { scope="global" }
+        /^phy#/ { scope=$1 }
+        $1 == "country" && scope == wanted {
+            sub(/:$/, "", $2); print $2; found=1; exit
+        }
+        END { if (!found) print "unknown" }
+    '
 }
+
+opb_get_reg_country() {
+    local iface phy
+    iface="$(opb_getprop wifi.interface)"
+    iface="${iface:-wlan0}"
+    phy="$(cat "/sys/class/net/$iface/phy80211/index" 2>/dev/null)"
+    case "$phy" in ''|*[!0-9]*) echo unknown; return ;; esac
+    iw reg get 2>/dev/null | opb_parse_reg_country "$phy"
+}
+
+opb_driver_reload_eligible() {
+    # Verified on PLK110/SM8850 only. Never guess a module name or use rmmod here.
+    [ "$(opb_getprop ro.product.model)" = PLK110 ] || return 1
+    [ "$(opb_getprop ro.soc.model)" = SM8850 ] || return 1
+    [ -d /sys/module/qca_cld3_peach_v2 ] || return 1
+    [ -f /odm/bin/wlan_ko_insmod.sh ] || return 1
+    case "$(get_6ghz_channel_state)" in absent|disabled) ;; *) return 1 ;; esac
+    # Require our overlay on the actual firmware search path in init's namespace.
+    grep -F '/oneplus_global_wifi_beast/xml/' /proc/1/mountinfo 2>/dev/null |
+        grep -Fq ' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini ' || return 1
+    [ "$(opb_getprop init.svc.wifiDriverReload)" != running ]
+}
+
+opb_reload_vendor_driver() (
+    # Restore Wi-Fi on normal completion and on an unsuccessful reload request.
+    trap 'opb_set_wifi_enabled enabled >/dev/null 2>&1' EXIT
+    trap 'exit 1' INT TERM
+    opb_set_wifi_enabled disabled >/dev/null 2>&1 || exit 1
+    sleep 3
+    setprop ctl.start wifiDriverReload || exit 1
+    sleep 3
+    n=0
+    while [ "$(opb_getprop init.svc.wifiDriverReload)" = running ] && [ "$n" -lt 20 ]; do
+        sleep 1
+        n=$((n + 1))
+    done
+    [ "$(opb_getprop init.svc.wifiDriverReload)" = stopped ]
+)

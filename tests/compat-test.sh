@@ -192,22 +192,14 @@ grep -q 'Device check: unverified' "$WORK/unverified-install.log"
 grep -q 'customize done' "$WORK/unverified-install.log"
 echo 'PASS: missing properties warn without aborting the installer'
 
-if opb_recovery_due -1 0 100 0 60; then echo 'FAIL: boot restart'; exit 1; fi
-if opb_recovery_due 0 0 130 100 60; then echo 'FAIL: radio cooldown'; exit 1; fi
-if opb_recovery_due -1 3 130 100 60; then echo 'FAIL: channel cooldown'; exit 1; fi
-if opb_recovery_due 0 3 0 0 60; then echo 'FAIL: invalid uptime'; exit 1; fi
-opb_recovery_due 0 0 160 100 60
-opb_recovery_due -1 3 160 100 60
-echo 'PASS: boot behavior and shared recovery cooldown'
+REG_DUMP='global
+country 00: DFS-UNSET
+phy#2 (self-managed)
+country US: DFS-FCC
+phy#0 (self-managed)
+country 00: DFS-UNSET'
+assert_eq "$(printf '%s\n' "$REG_DUMP" | opb_parse_reg_country 2)" US 'self-managed primary PHY country'
+assert_eq "$(printf '%s\n' "$REG_DUMP" | opb_parse_reg_country 9)" unknown 'missing PHY is not global country'
 
-sed -n '/^assess_mlo_balance()/,/^rebalance_mlo_links()/ { /^rebalance_mlo_links()/!p; }' service.sh > "$WORK/mlo.sh"
-. "$WORK/mlo.sh"
-get_wifi_ifaces() { printf '%s\n' "$TEST_IFACES"; }
-get_interface_freq_mhz() { if [ "$1" = wlan0 ]; then echo 5180; else echo 5955; fi; }
-get_interface_txrate_mbps() { if [ "$1" = wlan0 ]; then echo 1200; else echo 10; fi; }
-TEST_IFACES=wlan0
-assert_eq "$(assess_mlo_balance)" 0 'single-netdev MLO is not stalled'
-TEST_IFACES='wlan0 wlan1'
-assert_eq "$(assess_mlo_balance)" 1 'visible stalled secondary link'
-echo 'PASS: MLO interface handling'
-echo 'All compatibility tests passed.'
+sh tests/wifi-policy-test.sh
+echo "All compatibility tests passed."

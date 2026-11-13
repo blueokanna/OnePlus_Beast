@@ -2,249 +2,61 @@
 
 MODDIR=${0%/*}
 . "${MODDIR}/compat.sh"
+. "${MODDIR}/wifi-policy.sh"
 opb_is_target_device || { log -t OnePlusBeastHB "$OPB_DEVICE_REASON"; exit 0; }
-PID_FILE="${MODDIR}/wifi-heartbeat.pid"
-STATUS_FILE="${MODDIR}/wifi-heartbeat.status"
-LOG_FILE="${MODDIR}/wifi-heartbeat.log"
-LOG_TAG="OnePlusBeastHB"
-TARGET_CC="US"
+PID_FILE="$MODDIR/wifi-heartbeat.pid"
+STATUS_FILE="$MODDIR/wifi-heartbeat.status"
+LOG_FILE="$MODDIR/wifi-heartbeat.log"
 
 if [ -r "$PID_FILE" ]; then
     OLD_PID="$(cat "$PID_FILE" 2>/dev/null)"
     case "$OLD_PID" in
         ''|*[!0-9]*) ;;
         *)
-            kill -0 "$OLD_PID" >/dev/null 2>&1 && exit 0
+            if kill -0 "$OLD_PID" 2>/dev/null &&
+                tr '\000' '\n' < "/proc/$OLD_PID/cmdline" 2>/dev/null | grep -Fxq "$MODDIR/wifi-heartbeat.sh"; then
+                exit 0
+            fi
             ;;
     esac
 fi
-
 echo "$$" > "$PID_FILE"
-trap 'rm -f "$PID_FILE"' EXIT INT TERM
+trap 'rm -f "$PID_FILE"' EXIT
+trap 'exit 0' INT TERM
 
 log_message() {
-    local message="$1"
-    local stamp=""
-
-    stamp="$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null)"
-    echo "${stamp} ${message}" >> "$LOG_FILE"
-    log -t "$LOG_TAG" "$message"
-
-    if [ -f "$LOG_FILE" ] && [ "$(wc -c < "$LOG_FILE")" -gt 131072 ]; then
-        tail -n 300 "$LOG_FILE" > "${LOG_FILE}.tmp"
-        mv -f "${LOG_FILE}.tmp" "$LOG_FILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') $1" >> "$LOG_FILE"
+    log -t OnePlusBeastHB "$1"
+    if [ "$(wc -c < "$LOG_FILE")" -gt 131072 ]; then
+        tail -n 300 "$LOG_FILE" > "$LOG_FILE.tmp"
+        mv -f "$LOG_FILE.tmp" "$LOG_FILE"
     fi
 }
 
-RESETPROP="$(opb_find_resetprop)"
-
-set_runtime_prop() {
-    local name="$1"
-    local value="$2"
-
-    [ "$(getprop "$name")" = "$value" ] && return
-    if [ -n "$RESETPROP" ]; then
-        "$RESETPROP" "$name" "$value" >/dev/null 2>&1
-    else
-        setprop "$name" "$value" >/dev/null 2>&1
-    fi
-}
-
-get_interval() {
-    local value=""
-
-    value="$(getprop persist.sys.opb.6ghz.heartbeat_interval)"
-    case "$value" in
-        ''|*[!0-9]*) value=2 ;;
-    esac
-    [ "$value" -lt 1 ] && value=1
-    [ "$value" -gt 10 ] && value=10
-    echo "$value"
-}
-
-get_cooldown() {
-    local value=""
-
-    value="$(getprop persist.sys.opb.6ghz.recovery_cooldown)"
-    case "$value" in
-        ''|*[!0-9]*) value=60 ;;
-    esac
-    [ "$value" -lt 30 ] && value=30
-    [ "$value" -gt 600 ] && value=600
-    echo "$value"
-}
-
-is_wifi_enabled() {
-    local value=""
-
-    value="$(settings get global wifi_on 2>/dev/null)"
-    case "$value" in
-        1|2) echo 1 ;;
-        *) echo 0 ;;
-    esac
-}
-
-get_radio_signature() {
-    echo "$(settings get global airplane_mode_on 2>/dev/null)|$(getprop gsm.sim.state)|$(getprop gsm.operator.numeric)|$(getprop gsm.operator.iso-country)"
-}
-
-country_heartbeat() {
-    set_runtime_prop wifi.country_code "$TARGET_CC"
-    set_runtime_prop vendor.wifi.country_code "$TARGET_CC"
-    set_runtime_prop persist.sys.wifi.country_code "$TARGET_CC"
-    set_runtime_prop persist.vendor.wifi.country_code "$TARGET_CC"
-    set_runtime_prop persist.sys.wifi.default_country_code "$TARGET_CC"
-    set_runtime_prop persist.vendor.wifi.default_country_code "$TARGET_CC"
-    set_runtime_prop wlan.driver.country "$TARGET_CC"
-    set_runtime_prop vendor.wlan.country_code "$TARGET_CC"
-    set_runtime_prop vendor.wifi.ap_country_code "$TARGET_CC"
-    set_runtime_prop persist.vendor.wifi.dynamic_regdom 0
-    set_runtime_prop persist.sys.wifi.dynamic_regdom 0
-    set_runtime_prop persist.vendor.wifi.world_mode 0
-    set_runtime_prop persist.vendor.wlan.global_regdom_mode 0
-    set_runtime_prop persist.vendor.wifi.allow_11d 0
-    set_runtime_prop persist.vendor.extreme.wifi.6ghz.enabled 1
-    set_runtime_prop persist.vendor.wifi.wifi7_enabled 1
-    set_runtime_prop persist.vendor.wifi.eht_enabled 1
-    set_runtime_prop persist.sys.oplus.wifi6ghz.support 1
-    set_runtime_prop persist.vendor.oplus.wifi6ghz.support 1
-
-    if [ -n "$RESETPROP" ]; then
-        "$RESETPROP" -n ro.boot.wificountrycode "$TARGET_CC" >/dev/null 2>&1
-    fi
-    command -v iw >/dev/null 2>&1 && iw reg set "$TARGET_CC" >/dev/null 2>&1
-    command -v cmd >/dev/null 2>&1 && \
-        opb_wifi_cmd force-country-code enabled "$TARGET_CC" >/dev/null 2>&1
-}
-
-refresh_framework_state() {
-    settings put global wifi_country_code "$TARGET_CC" >/dev/null 2>&1
-    settings put global wifi_6ghz_support 1 >/dev/null 2>&1
-    opb_wifi_cmd reload-resources >/dev/null 2>&1
-    opb_wifi_cmd start-scan >/dev/null 2>&1
-}
-
-hard_recover_wifi() {
-    local reason="$1"
-    local wifi_was_on=""
-
-    wifi_was_on="$(is_wifi_enabled)"
-    log_message "hard recovery reason=${reason} wifi_on=${wifi_was_on}"
-
-    opb_wifi_cmd force-country-code disabled >/dev/null 2>&1
-    country_heartbeat
-    refresh_framework_state
-
-    [ "$wifi_was_on" = "1" ] || return
-
-    # Let the framework manage AIDL/HIDL HAL lifecycle on current ROMs.
-    opb_set_wifi_enabled disabled >/dev/null 2>&1 || {
-        log_message "hard recovery skipped: cannot disable Wi-Fi"
-        return 1
-    }
-    sleep 2
-    country_heartbeat
-    opb_set_wifi_enabled enabled >/dev/null 2>&1 || {
-        log_message "hard recovery failed: cannot enable Wi-Fi"
-        return 1
-    }
-    sleep 4
-    country_heartbeat
-    refresh_framework_state
-    log_message "hard recovery completed six_ghz=$(get_6ghz_channel_state)"
-}
-
-probe_runtime_support() {
-    local force_rc=127
-    local iw_rc=127
-
-    if command -v cmd >/dev/null 2>&1; then
-        opb_wifi_cmd force-country-code enabled "$TARGET_CC" >/dev/null 2>&1
-        force_rc=$?
-    fi
-    if command -v iw >/dev/null 2>&1; then
-        iw reg set "$TARGET_CC" >/dev/null 2>&1
-        iw_rc=$?
-    fi
-    log_message "runtime probe force_country_rc=${force_rc} iw_reg_rc=${iw_rc}"
-}
-
-until [ "$(getprop sys.boot_completed)" = "1" ]; do
-    sleep 2
-done
-
+until [ "$(opb_getprop sys.boot_completed)" = 1 ]; do sleep 2; done
+INTERVAL="$(opb_getprop persist.sys.opb.6ghz.heartbeat_interval)"
+case "$INTERVAL" in ''|*[!0-9]*) INTERVAL=5 ;; esac
+[ "$INTERVAL" -ge 5 ] || INTERVAL=5
+[ "$INTERVAL" -le 60 ] || INTERVAL=60
 opb_probe_wifi_commands
-
-INTERVAL="$(get_interval)"
-COOLDOWN="$(get_cooldown)"
-LAST_SIGNATURE="$(get_radio_signature)"
-PENDING_EVENT=-1
-BAD_STREAK=0
+OPB_BAD_SAMPLES=0
+LAST_STATE=""
 PULSE_COUNT=0
-LAST_RECOVERY=0
-LAST_STATE="unknown"
+log_message "passive monitor started interval=${INTERVAL}s automatic_reconnect=disabled"
 
-if [ -n "$RESETPROP" ]; then
-    RESETPROP_STATE="yes"
-else
-    RESETPROP_STATE="no"
-fi
-log_message "heartbeat started interval=${INTERVAL}s cooldown=${COOLDOWN}s resetprop=${RESETPROP_STATE}"
-probe_runtime_support
-
-while [ "$(getprop persist.sys.opb.6ghz.heartbeat)" != "0" ]; do
-    NOW="$(cut -d. -f1 /proc/uptime 2>/dev/null)"
-    case "$NOW" in
-        ''|*[!0-9]*) NOW=0 ;;
-    esac
-
-    SIGNATURE="$(get_radio_signature)"
-    if [ "$SIGNATURE" != "$LAST_SIGNATURE" ]; then
-        LAST_SIGNATURE="$SIGNATURE"
-        PENDING_EVENT=3
-        log_message "radio state changed; debounce recovery armed signature=${SIGNATURE}"
-    elif [ "$PENDING_EVENT" -gt 0 ]; then
-        PENDING_EVENT=$((PENDING_EVENT - 1))
+while [ "$(opb_getprop persist.sys.opb.6ghz.heartbeat)" != 0 ]; do
+    # No country reassertion, active scans, resource reloads, Wi-Fi toggles,
+    # reassociation, HAL restarts or driver reloads in this observer.
+    opb_monitor_step
+    if [ "$OPB_POLICY_STATE" != "$LAST_STATE" ]; then
+        log_message "state=$OPB_POLICY_STATE action=$OPB_POLICY_ACTION six_ghz=$OPB_CHANNEL_STATE"
+        LAST_STATE="$OPB_POLICY_STATE"
     fi
-
-    if [ $((PULSE_COUNT % 15)) -eq 0 ]; then
-        opb_probe_wifi_commands
-    fi
-    country_heartbeat
+    REG_CC="$(opb_get_reg_country)"
+    echo "timestamp=$(date +%s) state=$OPB_POLICY_STATE action=$OPB_POLICY_ACTION link=$OPB_LINK_STATE frequency_mhz=$OPB_LINK_FREQ six_ghz=$OPB_CHANNEL_STATE scan_6ghz=$OPB_SCAN_STATE bad_samples=$OPB_BAD_SAMPLES reg_country=$REG_CC automatic_reconnect=disabled" > "$STATUS_FILE.tmp"
+    mv -f "$STATUS_FILE.tmp" "$STATUS_FILE"
     PULSE_COUNT=$((PULSE_COUNT + 1))
-    if [ $((PULSE_COUNT % 15)) -eq 0 ]; then
-        refresh_framework_state
-    fi
-
-    CHANNEL_STATE="$(get_6ghz_channel_state)"
-    if [ "$CHANNEL_STATE" != "$LAST_STATE" ]; then
-        log_message "6 GHz channel state=${CHANNEL_STATE}"
-        LAST_STATE="$CHANNEL_STATE"
-    fi
-
-    case "$CHANNEL_STATE" in
-        disabled|absent) BAD_STREAK=$((BAD_STREAK + 1)) ;;
-        *) BAD_STREAK=0 ;;
-    esac
-
-    if opb_recovery_due "$PENDING_EVENT" "$BAD_STREAK" "$NOW" "$LAST_RECOVERY" "$COOLDOWN"; then
-        if [ "$PENDING_EVENT" -eq 0 ]; then
-            hard_recover_wifi "radio-transition"
-        else
-            hard_recover_wifi "channel-${CHANNEL_STATE}"
-        fi
-        LAST_RECOVERY="$NOW"
-        PENDING_EVENT=-1
-        BAD_STREAK=0
-    fi
-
-    if [ $((PULSE_COUNT % 15)) -eq 0 ]; then
-        REG_CC="$(iw reg get 2>/dev/null | awk '/country/{print $2; exit}' | tr -d ':')"
-        PROP_CC="$(getprop persist.vendor.wifi.country_code)"
-        echo "timestamp=$(date +%s) uptime_seconds=${NOW} country=${TARGET_CC} prop_country=${PROP_CC} reg_country=${REG_CC} six_ghz=${CHANNEL_STATE} signature=${SIGNATURE}" > "$STATUS_FILE"
-    fi
-
+    if [ $((PULSE_COUNT % 12)) -eq 0 ]; then opb_probe_wifi_commands; fi
     sleep "$INTERVAL"
 done
-
-log_message "heartbeat stopped by persist.sys.opb.6ghz.heartbeat=0"
+log_message 'passive monitor stopped'

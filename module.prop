@@ -1,6 +1,6 @@
 id=oneplus_global_wifi_beast
 name=OnePlus Universal Wi-Fi Beast
-version=v2.4.1_Android17_DeviceDetectFix
-versionCode=241
+version=v2.5_ConnectionFirst
+versionCode=250
 author=blueokanna
-description=OnePlus 15 / Android 17 compatibility, adaptive Wi-Fi commands and cfg discovery, rate-limited 6 GHz recovery; no kernel replacement or partition file writes.
+description=Connection-first Wi-Fi policy: passive 6 GHz capability/link/scan checks, no automatic disconnects or reassociation; OEM driver repair is manual only.

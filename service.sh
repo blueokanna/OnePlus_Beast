@@ -3,6 +3,7 @@
 MODDIR=${0%/*}
 
 . "${MODDIR}/compat.sh"
+. "${MODDIR}/wifi-policy.sh"
 opb_is_target_device || { log -t OnePlusBeast "$OPB_DEVICE_REASON"; exit 0; }
 RESETPROP="$(opb_find_resetprop)"
 
@@ -24,7 +25,7 @@ verify_runtime_state() {
     local six=""
 
     forced="$(getprop persist.vendor.wifi.country_code)"
-    reg="$(iw reg get 2>/dev/null | awk '/country/{print $2; exit}' | tr -d ':')"
+    reg="$(opb_get_reg_country)"
     six="$(get_6ghz_channel_state)"
 
     logi "verify target_cc=${cc} persist_cc=${forced} reg=${reg} six_ghz=${six}"
@@ -156,7 +157,10 @@ enforce_country_runtime() {
     local cc="$1"
     [ "$(is_valid_cc "$cc")" = "1" ] || return 0
 
-    # Follow AndroPlus style: keep boot country and runtime country in sync.
+    opb_read_connection
+    [ "$OPB_LINK_STATE" = disconnected ] || return 0
+
+    # Apply only while all observed station links are idle.
     opb_resetprop -n ro.boot.wificountrycode "$cc"
     set_country_props "$cc"
 
@@ -234,36 +238,8 @@ set_feature_props() {
     opb_resetprop persist.vendor.wifi.dru_scheduler_enabled 1
     opb_resetprop persist.vendor.wifi.ul_dl_mu_mimo_optimized 1
     opb_resetprop persist.vendor.wifi.mlo_link_aggregation_enabled 1
-    opb_resetprop persist.vendor.wifi.roaming_scan_aggressive 1
+    opb_resetprop persist.vendor.wifi.roaming_scan_aggressive 0
     opb_resetprop persist.vendor.wifi.latency_critical_path 1
-}
-
-set_wifi8_like_settings() {
-    if ! command -v settings >/dev/null 2>&1; then
-        return
-    fi
-
-    settings put global wifi_scan_always_enabled 1
-    settings put global wifi_suspend_optimizations_enabled 0
-    settings put global wifi_framework_scan_interval_ms 15000
-    settings put global wifi_score_params "rssi2=-80:-73:-60,rssi5=-80:-70:-57"
-    settings put global wifi_6ghz_support 1
-    settings put global wifi_display_mlo_info 1
-    settings put global wifi_show_band_summary 1
-}
-
-warmup_country_lock() {
-    local cc="$1"
-    local n=0
-    [ "$(is_valid_cc "$cc")" = "1" ] || return
-
-    # Strong lock window after boot to resist framework fallback to CN.
-    while [ "$n" -lt 20 ]; do
-        enforce_country_runtime "$cc"
-        set_feature_props
-        n=$((n + 1))
-        sleep 3
-    done
 }
 
 get_thermal_max_millic() {
@@ -478,88 +454,6 @@ apply_dynamic_txpower() {
     done
 }
 
-assess_link_instability() {
-    local iface=""
-    local rssi="0"
-    local txr="0"
-    local rxr="0"
-
-    for iface in $(get_wifi_ifaces); do
-        rssi="$(get_interface_rssi "$iface")"
-        txr="$(get_interface_txrate_mbps "$iface")"
-        rxr="$(get_interface_rxrate_mbps "$iface")"
-
-        if [ "$rssi" -le -82 ] && [ "$txr" -le 72 ] && [ "$rxr" -le 72 ]; then
-            echo 1
-            return
-        fi
-    done
-
-    echo 0
-}
-
-heal_unstable_links() {
-    local iface=""
-
-    if command -v cmd >/dev/null 2>&1; then
-        opb_wifi_cmd start-scan >/dev/null 2>&1
-    fi
-
-    for iface in $(get_wifi_ifaces); do
-        iw dev "$iface" set power_save off >/dev/null 2>&1
-        if command -v wpa_cli >/dev/null 2>&1; then
-            wpa_cli -i "$iface" reassociate >/dev/null 2>&1
-        fi
-    done
-}
-
-assess_mlo_balance() {
-    local iface=""
-    local freq="0"
-    local rate="0"
-    local max5="0"
-    local max6="0"
-    local seen6=0
-
-    for iface in $(get_wifi_ifaces); do
-        freq="$(get_interface_freq_mhz "$iface")"
-        rate="$(get_interface_txrate_mbps "$iface")"
-        if [ "$freq" -ge 5925 ] && [ "$freq" -le 7125 ]; then
-            seen6=1
-            [ "$rate" -gt "$max6" ] && max6="$rate"
-        elif [ "$freq" -ge 4900 ] && [ "$freq" -le 5895 ]; then
-            [ "$rate" -gt "$max5" ] && max5="$rate"
-        fi
-    done
-
-    # Modern MLO can expose one netdev. A 5 GHz-only observation is not a stalled 6 GHz link.
-    if [ "$seen6" -eq 1 ] && [ "$max5" -ge 900 ] && [ "$max6" -le 20 ]; then
-        echo 1
-    else
-        echo 0
-    fi
-}
-
-rebalance_mlo_links() {
-    local iface=""
-    opb_resetprop persist.vendor.wifi.mlo_rebalance_request 1
-    opb_resetprop persist.sys.wifi.mlo_rebalance_request 1
-
-    for iface in $(get_wifi_ifaces); do
-        iw dev "$iface" set power_save off >/dev/null 2>&1
-        if command -v wpa_cli >/dev/null 2>&1; then
-            wpa_cli -i "$iface" reassociate >/dev/null 2>&1
-        fi
-    done
-
-    if command -v cmd >/dev/null 2>&1; then
-        opb_wifi_cmd reload-resources >/dev/null 2>&1
-    fi
-
-    sleep 2
-    opb_resetprop persist.vendor.wifi.mlo_rebalance_request 0
-    opb_resetprop persist.sys.wifi.mlo_rebalance_request 0
-}
 
 opb_detect_platform
 opb_probe_wifi_commands
@@ -572,91 +466,35 @@ if [ "$(getprop persist.sys.opb.6ghz.heartbeat)" != "0" ] && \
     sh "${MODDIR}/wifi-heartbeat.sh" >/dev/null 2>&1 &
 fi
 
-# Resolve the configured country; hard-lock mode returns US before any dynamic source.
-TARGET_CC="$(pick_dynamic_country)"
-enforce_country_runtime "$TARGET_CC"
-warmup_country_lock "$TARGET_CC"
+# Static feature props are applied once. Never reassociate or change hotspot settings.
 set_feature_props
-set_wifi8_like_settings
-verify_runtime_state "$TARGET_CC"
-apply_power_save_policy 1
-apply_dynamic_txpower "$(getprop persist.vendor.wifi.country_code)" 1
-
-if command -v settings >/dev/null 2>&1; then
-    settings put global soft_ap_band 4
-    settings put global wifi_6ghz_support 1
-    settings put global soft_ap_bridged_ap_enabled 1
-    settings put global soft_ap_timeout_enabled 0
-    settings put global soft_ap_6ghz_enabled 1
-    settings put global soft_ap_auto_shut_off_enabled 0
-    settings put global soft_ap_max_client_num 32
-    settings put global wifi_country_code "$(getprop persist.vendor.wifi.country_code)"
-    settings put global wifi_display_mlo_info 1
-    settings put global wifi_show_band_summary 1
-    settings put global wifi_verbose_logging_enabled 1
-fi
-
-CC_NOW="$(getprop persist.vendor.wifi.country_code)"
-enforce_country_runtime "$CC_NOW"
-
-# Keep the slower adaptive policies alive; wifi-heartbeat.sh handles radio transitions.
-MLO_BAD_STREAK=0
-LINK_BAD_STREAK=0
+opb_resetprop persist.vendor.wifi.roaming_scan_aggressive 0
+opb_resetprop persist.vendor.wifi.mlo_rebalance_request 0
+opb_resetprop persist.sys.wifi.mlo_rebalance_request 0
+IDLE_SAMPLES=0
+COUNTRY_ATTEMPTED=""
 while true; do
-    opb_probe_wifi_commands
-    TARGET_CC="$(pick_dynamic_country)"
-    CUR_CC="$(normalize_cc "$(getprop persist.vendor.wifi.country_code)")"
-    SCREEN_ON="$(is_screen_on)"
-
-    if [ "$TARGET_CC" != "$CUR_CC" ]; then
-        enforce_country_runtime "$TARGET_CC"
-        logi "Regdom switched to $TARGET_CC"
+    opb_read_connection
+    if [ "$OPB_LINK_STATE" = disconnected ]; then
+        IDLE_SAMPLES=$((IDLE_SAMPLES + 1))
     else
-        # Re-assert country each loop to prevent framework/firmware fallback to CN.
-        enforce_country_runtime "$TARGET_CC"
+        IDLE_SAMPLES=0
     fi
-
-    if [ "$(getprop persist.sys.opb.wifi.force_mode)" = "1" ]; then
-        logi "Manual country override active: $TARGET_CC"
-    elif [ "$(getprop persist.sys.opb.wifi.hard_unlock_mode)" = "1" ]; then
-        logi "Hard unlock mode active: $TARGET_CC"
-    fi
-    set_feature_props
-    set_wifi8_like_settings
-    verify_runtime_state "$TARGET_CC"
-    apply_power_save_policy "$SCREEN_ON"
-
-    if command -v settings >/dev/null 2>&1; then
-        if [ "$(getprop persist.sys.opb.hotspot_6ghz_force)" = "1" ]; then
-            settings put global soft_ap_band 4
-            settings put global soft_ap_6ghz_enabled 1
-            settings put global soft_ap_bridged_ap_enabled 1
+    TARGET_CC="$(pick_dynamic_country)"
+    # Country updates are deferred while any connection, AP, or uncertain state exists.
+    # At most one attempt per target in this process, after three idle observations.
+    if [ "$IDLE_SAMPLES" -ge 3 ] && [ "$COUNTRY_ATTEMPTED" != "$TARGET_CC" ]; then
+        COUNTRY_ATTEMPTED="$TARGET_CC"
+        if [ "$(opb_get_reg_country)" != "$TARGET_CC" ]; then
+            enforce_country_runtime "$TARGET_CC"
         fi
     fi
-
-    apply_dynamic_txpower "$TARGET_CC" "$SCREEN_ON"
-
-    if [ "$(assess_mlo_balance)" -eq 1 ]; then
-        MLO_BAD_STREAK=$((MLO_BAD_STREAK + 1))
-    else
-        MLO_BAD_STREAK=0
-    fi
-
-    if [ "$(assess_link_instability)" -eq 1 ]; then
-        LINK_BAD_STREAK=$((LINK_BAD_STREAK + 1))
-    else
-        LINK_BAD_STREAK=0
-    fi
-
-    if [ "$MLO_BAD_STREAK" -ge 3 ]; then
-        rebalance_mlo_links
-        MLO_BAD_STREAK=0
-    fi
-
-    if [ "$LINK_BAD_STREAK" -ge 2 ]; then
-        heal_unstable_links
-        LINK_BAD_STREAK=0
-    fi
-
+    case "$OPB_LINK_STATE" in
+        connected_*)
+            SCREEN_ON="$(is_screen_on)"
+            apply_power_save_policy "$SCREEN_ON"
+            apply_dynamic_txpower "$TARGET_CC" "$SCREEN_ON"
+            ;;
+    esac
     sleep 15
 done

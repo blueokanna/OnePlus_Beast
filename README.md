@@ -11,7 +11,38 @@
 - 默认强制 US 地区
 - 启用 6GHz、Wi-Fi 7、MLO、热点 6GHz 等能力
 
-### 一加 15 / Android 17 适配（v2.4.1）
+### 一加 15 / Android 17 适配（v2.5）
+
+v2.5 优先保持当前连接。后台不再开关 Wi-Fi、重载驱动、主动扫描、刷新 Wi-Fi 资源或调用 `wpa_cli reassociate`。弱信号、低速、MLO 观测不完整和蜂窝状态变化都不会触发重连。
+
+| 观察到的情况 | 模块处理 |
+| --- | --- |
+| 已连接 6GHz | 保持连接，记录状态 |
+| 已连接 2.4/5GHz，即使附近有 6GHz 或信号弱 | 保持连接，由 Android 选择网络 |
+| 未连接，最近缓存没看到 6GHz | 等待系统发现网络，不判定故障 |
+| 缓存为空、超过 60 秒或查询失败 | 记为未知，不推断周围没有网络 |
+| 未连接且驱动能力连续三次缺失/禁用 | 只提示 `manual_check_recommended` |
+| Wi-Fi 关闭、热点/P2P-GO 活跃、连接状态未知 | 不干预 |
+
+国家码只在连续三轮确认所有可见 STA 连接空闲后才允许更新，目标国家码不变时不会重复尝试。连接期间会推迟更新。原来的主动漫游开关默认关闭。
+
+v2.4.2 已在 PLK110 / SM8850、Android 17、下述内核上通过 ADB 验证：
+配置挂载与 US 国家码均生效时，旧驱动实例仍只上报 2.4/5GHz；执行一次手机自带的
+`wifiDriverReload` 服务后，STA/SAP 6GHz 信道恢复，实际连接达到 **6935 MHz / Wi-Fi 7 / 320 MHz**。
+这次验证没有改动配置内容，说明仅开关 Wi-Fi 不足以让该驱动实例重新读取挂载后的配置。
+
+- 上述有中断的操作在 v2.5 移到独立手动入口，开机和后台均不调用它。
+- 缺少附近的 6GHz 网络不构成修复条件。
+- 状态中的监管域改为实际 Wi-Fi PHY 的国家码，避免把全局 `00` 误当成 self-managed PHY 的国家码。
+- `driver-init.status` 记录一次性驱动初始化的返回码和 6GHz 状态。此修复不替换内核或厂商 `.ko`。
+
+驱动初始化行为参考 [一加公开的驱动源码](https://github.com/OnePlusOSS/android_kernel_modules_and_devicetree_oneplus_sm8850/blob/oneplus/sm8850_b_16.0.0_oneplus_15/vendor/qcom/opensource/wlan/qcacld-3.0/core/hdd/src/wlan_hdd_main.c)。
+
+仅在你接受短暂断网并主动要求驱动修复时执行以下命令；它只处理已验证机型的驱动能力缺失，检测到热点、关闭 Wi-Fi 或未知状态时退出：
+
+```sh
+su -c 'sh /data/adb/modules/oneplus_global_wifi_beast/repair-wifi.sh --reload-driver'
+```
 
 v2.4.1 修复 KernelSU 安装时被 `OnePlus/OPPO Qualcomm device required` 拦截的问题。
 检测优先使用 `/system/bin/getprop`，并组合 product/vendor/odm/system 等属性、SoC 型号和 hardware 标识，兼容 QTI、Qualcomm、Snapdragon 等写法。
@@ -27,13 +58,14 @@ v2.4.1 修复 KernelSU 安装时被 `OnePlus/OPPO Qualcomm device required` 拦�
 - 安装时发现 Wi-Fi 配置及芯片子目录，为每个文件单独生成覆盖副本；符号链接复制为普通文件，避免修改原文件。
 - 配置项写在 `END` 之前，兼容键名周围空白和重复键。
 - 根据设备实际的 `cmd wifi help` 探测可用命令；早期开机阶段不调用 Wi-Fi Binder 服务。
-- 恢复通过框架开关 Wi-Fi，不按猜测的服务名重启 HAL；蜂窝变化和信道丢失共用冷却时间，启动时不再无条件重启 Wi-Fi。
+- 常驻监测只读；需要重载驱动时由用户明确触发手动修复。
 - `iw` 查询失败记为 `unknown`，单网卡 MLO 的 5GHz 观测不再单独触发 6GHz 链路修复。
 
 安装并重启后，可在 root shell 中查看：
 
 ```sh
 cat /data/adb/modules/oneplus_global_wifi_beast/compatibility.status
+cat /data/adb/modules/oneplus_global_wifi_beast/driver-init.status
 cat /data/adb/modules/oneplus_global_wifi_beast/xml/overlays.list
 cat /data/adb/modules/oneplus_global_wifi_beast/wifi-heartbeat.status
 logcat -d -s OnePlusBeast OnePlusBeastHB
@@ -41,14 +73,14 @@ logcat -d -s OnePlusBeast OnePlusBeastHB
 
 `compatibility.status` 记录机型、品牌与 SoC 原始属性、设备判断原因、系统、内核、页大小、工具及命令可用性；命令存在不代表驱动已接受配置。
 没有 WCNSS 文件的 ROM 会跳过配置覆盖，没有 `iw` 时无法确认 PHY 的 6GHz 信道状态。
-**当前验证范围是本地 Shell 语法和模拟回归测试，尚未在该设备/固件上实测。**
-6GHz、MLO 和热点效果需要结合真机日志、驱动和路由器验证，写入属性本身不代表功能已生效。
+**v2.5 已在 PLK110 上通过 ADB 部署验证：实际连接为 5220 MHz（5GHz），PHY 6GHz 能力正常，最近扫描缓存未看到 6GHz，监测选择 `keep_connection`。更新前后 `wlan0/carrier_changes` 均为 8，未调用 Wi-Fi 开关或驱动重载。其他异常场景由本地回归覆盖。**
+已验证 6GHz STA 连接及 SAP 信道列表，未验证实际 6GHz 热点客户端连接或多链路 MLO 聚合。写入属性本身不代表功能已生效。
 
 ### 核心特性
 
 #### 1. 国家码与区域策略
 - 开机后默认锁定 US。
-- 运行时持续重压制国家码，降低被框架或驱动回写成 CN 的概率。
+- 连接期间保留当前监管域，空闲状态才允许有限的国家码更新。
 - 同时同步 `ro.boot.wificountrycode`、`persist.*`、`iw reg` 和 `cmd wifi force-country-code`。
 
 #### 2. 发射功率策略
@@ -88,7 +120,7 @@ logcat -d -s OnePlusBeast OnePlusBeastHB
 | WiFi 8 特性 | 本模块对应做法 | 作用 |
 | --- | --- | --- |
 | Coordinated TWT | `persist.vendor.wifi.twt_coordinated_enabled=1`，并持续下发相关策略 | 更好的定时唤醒与低功耗协同 |
-| Multi-Link Operation | MLO 相关属性、链路平衡、重关联与修复 | 提升多链路稳定性和吞吐 |
+| Multi-Link Operation | MLO 相关属性与被动链路观测 | 保持连接，由系统选择链路 |
 | Multi-AP Coordination | 多 AP 协同相关开关 | 在复杂网络环境中更稳 |
 | OFDMA (# RU per STA) | 开启 OFDMA 多 RU 相关属性 | 更细粒度的空口资源分配 |
 | DSO / NPCA | 开启 DSO / NPCA 相关开关 | 降低调度抖动，改善并发体验 |
@@ -117,8 +149,8 @@ logcat -d -s OnePlusBeast OnePlusBeastHB
    - 注入关键属性，使 Wi-Fi 框架尽早读取到模块配置
 
 3. `service.sh`
-   - 在系统启动后持续应用国家码、功率、MLO、热点 6GHz 和 WiFi 8 风格稳定性策略
-   - 通过循环重压制，降低回退到 CN 的概率
+   - 在系统启动后设置功能属性，并按连接状态调整功率策略
+   - 空闲时有限更新国家码，连接期间保持现有连接
 
 ### 安装方法
 
@@ -153,11 +185,10 @@ logcat -d -s OnePlusBeast OnePlusBeastHB
 - `persist.sys.opb.hotspot_6ghz_force`
   - `1` = 强制热点 6GHz
 - `persist.sys.opb.6ghz.heartbeat`
-  - `1` = 开启独立 6GHz 心跳守护进程
+  - `1` = 开启只读 6GHz 状态监测
 - `persist.sys.opb.6ghz.heartbeat_interval`
-  - 默认 `2` 秒，可设置范围为 `1` 到 `10`
-- `persist.sys.opb.6ghz.recovery_cooldown`
-  - 蜂窝状态变化或 6GHz 信道持续丢失时，恢复共用的最短间隔，默认 `60` 秒
+  - 默认 `5` 秒，可设置范围为 `5` 到 `60`
+- 旧版 `persist.sys.opb.6ghz.recovery_cooldown` 已不使用；后台不存在自动断连恢复。
 
 ### 重要说明
 
@@ -213,7 +244,21 @@ logcat -d -s OnePlusBeast OnePlusBeastHB
 This is a KSU/Magisk Wi-Fi module for OnePlus 11 and later OnePlus numeric flagship / Ace series devices.
 It aims to enhance Wi-Fi behavior **without modifying the system partition**, using runtime properties, Wi-Fi cfg overlay, and service-side enforcement.
 
-### OnePlus 15 / Android 17 compatibility (v2.4.1)
+### OnePlus 15 / Android 17 compatibility (v2.5)
+
+Connection preservation is the default. Automatic scripts never toggle Wi-Fi, reload
+the driver, request reassociation, initiate scans or reload Wi-Fi resources. Existing
+2.4/5 GHz links, weak signals, low rates and incomplete MLO observations stay connected.
+The observer distinguishes PHY capability, actual association and cached scan results.
+Empty, stale (>60 seconds) or failed queries remain unknown. Three consecutive missing
+capability samples while disconnected produce a manual-check recommendation only.
+Wi-Fi-off and AP/GO states are respected. Country changes are deferred while connected
+and attempted after three idle observations, without retrying an unchanged target.
+
+An explicitly requested OEM driver reload previously restored a real 6935 MHz / Wi-Fi 7 /
+320 MHz link on PLK110 / SM8850. That disruptive operation is now available only through
+`sh /data/adb/modules/oneplus_global_wifi_beast/repair-wifi.sh --reload-driver` as root;
+boot and background scripts do not call it. Missing nearby APs are not a repair trigger.
 
 v2.4.1 fixes overly strict install-time device rejection. Detection prefers native
 `/system/bin/getprop`, checks partition-specific identity properties and SoC/hardware
@@ -230,22 +275,20 @@ the userspace Android version. OTA build hashes are not pinned.
 
 The installer discovers per-chipset WCNSS files, copies symlink targets into independent
 overlays and places settings before `END`. Runtime commands are selected from the device's
-`cmd wifi help`. Recovery uses framework Wi-Fi toggles, shares a cooldown across radio and
-channel events, and does not restart Wi-Fi unconditionally at startup. Failed PHY queries
+`cmd wifi help`. Background monitoring is read-only. Driver repair requires explicit user action. Failed PHY queries
 remain unknown, and a single 5 GHz netdev does not imply a stalled 6 GHz MLO link.
 
 Read `compatibility.status`, `xml/overlays.list` and `wifi-heartbeat.status` in the installed
 module directory, plus `logcat -s OnePlusBeast OnePlusBeastHB`, to inspect the actual device.
 Missing WCNSS files skip overlays; missing `iw` leaves PHY state unknown. Command availability
-and property writes do not prove firmware support. **Validated locally with shell syntax and
-mock regression tests only; this device/firmware has not yet been tested.**
+and property writes do not prove firmware support. **v2.5 was deployed and observed on PLK110: an existing 5220 MHz link, enabled 6 GHz PHY capability and no 6 GHz AP in the recent cache produced `keep_connection`. The carrier-change counter stayed at 8 across deployment, with no Wi-Fi toggle or driver reload. Other fault scenarios have local regression coverage. Actual 6 GHz hotspot client connectivity and MLO aggregation have not been verified.**
 
 ### Core Goals
 
-- Run an independent 2-second 6GHz country/HAL/cfg80211 heartbeat
-- Rebuild Wi-Fi after a debounced cellular or airplane-mode transition even when PHY capability still looks enabled
+- Observe capability, association and cached scan results every 5 seconds by default
+- Keep existing connections and report confirmed capability issues for manual review
 - Keep the 6GHz channel table available across cellular registration and airplane-mode changes
-- Detect the real PHY channel state and recover the Wi-Fi stack only when 6GHz is actually lost
+- Treat missing or stale observations as unknown without forcing reconnects
 - Use module overlays and runtime properties without writing system, vendor, odm, or persist partition files
 - Force US as the default region
 - Use an AU-style high-power profile with thermal/health-aware derating
@@ -257,7 +300,7 @@ mock regression tests only; this device/firmware has not yet been tested.**
 
 #### 1. Country / Regdom Policy
 - US is locked by default after boot.
-- The module continuously reasserts the country code to reduce fallback to CN.
+- Country updates are deferred while connected and attempted conservatively while idle.
 - It synchronizes `ro.boot.wificountrycode`, `persist.*`, `iw reg`, and `cmd wifi force-country-code`.
 
 #### 2. Power Policy
@@ -280,7 +323,7 @@ mock regression tests only; this device/firmware has not yet been tested.**
 - OFDMA multi-RU
 - DSO / NPCA
 - DRU scheduling
-- MLO link balancing and unstable link healing
+- Passive MLO/link observation without forced reassociation
 
 ### Why This Design
 
@@ -297,7 +340,7 @@ This combination is not random tuning; it is intentionally built in the order of
 | WiFi 8 feature | Module mapping | Purpose |
 | --- | --- | --- |
 | Coordinated TWT | `persist.vendor.wifi.twt_coordinated_enabled=1` plus runtime enforcement | Better wake scheduling and power coordination |
-| Multi-Link Operation | MLO properties, link balancing, reassociation, and healing | Better throughput and stability across links |
+| Multi-Link Operation | MLO properties and passive link observation | Better throughput and stability across links |
 | Multi-AP Coordination | Multi-AP coordination toggles | Better roaming and dense-network behavior |
 | OFDMA (multiple RUs per STA) | OFDMA multi-RU toggles | Finer air-time allocation |
 | DSO / NPCA | DSO / NPCA toggles | Less scheduling jitter and better concurrency |
@@ -325,8 +368,8 @@ The module avoids modifying the system partition and works in three stages:
    - Applies core props before the framework fully initializes
 
 3. `service.sh`
-   - Continuously enforces country, power, hotspot, MLO, and WiFi 8-like stability behavior
-   - Reasserts the active region on a loop to resist fallback
+   - Sets feature properties after boot and adjusts power policy based on connection state
+   - Defers country updates during connections and observes network state without reconnecting
 
 ### Installation
 
@@ -357,11 +400,10 @@ The module avoids modifying the system partition and works in three stages:
 - `persist.sys.opb.hotspot_6ghz_force`
   - `1` forces 6GHz hotspot mode
 - `persist.sys.opb.6ghz.heartbeat`
-  - `1` enables the independent 6GHz heartbeat daemon
+  - `1` enables the read-only 6GHz monitor
 - `persist.sys.opb.6ghz.heartbeat_interval`
-  - Heartbeat interval in seconds, clamped from `1` to `10`; default `2`
-- `persist.sys.opb.6ghz.recovery_cooldown`
-  - Shared minimum recovery interval for radio transitions and unavailable 6GHz channels; default `60`
+  - Observation interval in seconds, clamped from `5` to `60`; default `5`
+- The former `persist.sys.opb.6ghz.recovery_cooldown` is unused; automatic disconnect recovery has been removed.
 
 ### Important Notes
 
