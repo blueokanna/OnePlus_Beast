@@ -2,6 +2,33 @@
 
 # OnePlus Beast Wi-Fi Module
 
+## v2.6：操作按钮与重启后初始化
+
+在 KernelSU / Magisk 的模块卡片点击 **操作 / Action** 即可检查并修复 6GHz。
+`action.sh` 使用管理器的原生按钮入口（[KernelSU 文档](https://kernelsu.org/guide/module.html#kernelsu-modules)、[Magisk 文档](https://topjohnwu.github.io/Magisk/guides.html#shell-scripts-sh)）。能力正常时只显示结果；确认异常时修复配置挂载和国家码，必要时重载一次厂商驱动，可能短暂中断 Wi-Fi。
+
+- 检测 `system_server` 的 PID 与启动时间，识别不改变内核 boot ID 的框架热重启；执行 `service.sh` 或 `post-fs-data.sh` 会生成模块加载事件。
+- 每个事件等待至少 20 秒，连续三轮确认 6GHz 信道缺失/禁用后才修复；观察窗口为 180 秒，每个事件最多尝试一次，跨事件自动修复至少间隔 120 秒。
+- 先确认 init 挂载命名空间中的配置覆盖，再恢复国家码；国家码恢复后能力正常就不重载驱动。
+- 失败后停止；普通 5GHz 连接、弱信号、未发现 6GHz AP 都不是修复依据。能力确实异常的启动事件允许一次修复，即使当时已连着 5GHz。
+- Wi-Fi 关闭、热点/P2P-GO 使用中或查询未知时推迟；窗口结束仍不适合修复则保留现状，可稍后使用按钮。
+- 后台与按钮共用内核文件锁；服务重复执行只通知现有服务，不产生多份重连循环。
+
+`init.status` 记录事件初始化进度，`driver-init.status` 记录修复结果；`wifi-heartbeat.status` 仍是只读连接监测。下面 v2.5 的完全手动修复描述是历史行为，由本节的有界事件初始化替代。
+
+验证：PLK110 / Android 17 真机上，修复前为 5220 MHz、CN、6GHz disabled；按钮路径修复后为 6935 MHz、US、6GHz enabled。再次通过管理器相同的 BusyBox standalone 环境执行按钮，会提示无需修复，链路变化计数保持不变。重复执行模块服务入口仍保留原服务进程。框架热重启事件、失败停止、跨事件冷却、关闭 Wi-Fi 和热点保护由模拟回归覆盖；本次未主动重启 Android 框架验证。
+
+### v2.6 behavior (English)
+
+The native module-card Action button checks and repairs 6 GHz capability. Framework
+restart identity and module-script invocations open a 180-second initialization window.
+After a 20-second settling period, three consecutive absent/disabled capability readings
+permit one repair, with a 120-second cross-event cooldown. Configuration mounts and
+country are restored first; the OEM driver is reloaded only if capability remains missing.
+Failures stop, and ordinary missing APs or weak 5 GHz links never trigger repair. Off,
+AP/GO and unknown states defer repair within the window. Manual and automatic requests
+share a kernel lock. This replaces v2.5's strictly manual initialization policy below.
+
 ## 简体中文
 
 ### 项目简介

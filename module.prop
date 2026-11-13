@@ -1,6 +1,6 @@
 id=oneplus_global_wifi_beast
 name=OnePlus Universal Wi-Fi Beast
-version=v2.5_ConnectionFirst
-versionCode=250
+version=v2.6
+versionCode=260
 author=blueokanna
-description=Connection-first Wi-Fi policy: passive 6 GHz capability/link/scan checks, no automatic disconnects or reassociation; OEM driver repair is manual only.
+description=6GHz repair Action button; bounded initialization after framework restart or module load. No reconnect loops for missing APs, weak links or normal 5GHz connections.

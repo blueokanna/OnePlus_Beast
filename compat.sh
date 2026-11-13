@@ -257,17 +257,22 @@ opb_get_reg_country() {
     iw reg get 2>/dev/null | opb_parse_reg_country "$phy"
 }
 
-opb_driver_reload_eligible() {
+opb_driver_reload_supported() {
     # Verified on PLK110/SM8850 only. Never guess a module name or use rmmod here.
     [ "$(opb_getprop ro.product.model)" = PLK110 ] || return 1
     [ "$(opb_getprop ro.soc.model)" = SM8850 ] || return 1
     [ -d /sys/module/qca_cld3_peach_v2 ] || return 1
     [ -f /odm/bin/wlan_ko_insmod.sh ] || return 1
+    [ "$(opb_getprop init.svc.wifiDriverReload)" = stopped ]
+}
+
+opb_driver_reload_eligible() {
+    opb_driver_reload_supported || return 1
     case "$(get_6ghz_channel_state)" in absent|disabled) ;; *) return 1 ;; esac
     # Require our overlay on the actual firmware search path in init's namespace.
     grep -F '/oneplus_global_wifi_beast/xml/' /proc/1/mountinfo 2>/dev/null |
         grep -Fq ' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini ' || return 1
-    [ "$(opb_getprop init.svc.wifiDriverReload)" != running ]
+    return 0
 }
 
 opb_reload_vendor_driver() (

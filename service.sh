@@ -4,7 +4,11 @@ MODDIR=${0%/*}
 
 . "${MODDIR}/compat.sh"
 . "${MODDIR}/wifi-policy.sh"
+. "${MODDIR}/wifi-lifecycle.sh"
 opb_is_target_device || { log -t OnePlusBeast "$OPB_DEVICE_REASON"; exit 0; }
+opb_request_init
+exec 9> "$MODDIR/service.lock"
+flock -n 9 9>&9 || exit 0
 RESETPROP="$(opb_find_resetprop)"
 
 until [ "$(getprop sys.boot_completed)" = "1" ]; do
@@ -463,7 +467,7 @@ logi "platform=$OPB_PROFILE android=$OPB_ANDROID sdk=$OPB_SDK kernel=$OPB_KERNEL
 # Start the watchdog only after checking the device and waiting for boot.
 if [ "$(getprop persist.sys.opb.6ghz.heartbeat)" != "0" ] && \
     [ -f "${MODDIR}/wifi-heartbeat.sh" ]; then
-    sh "${MODDIR}/wifi-heartbeat.sh" >/dev/null 2>&1 &
+    sh "${MODDIR}/wifi-heartbeat.sh" 9>&- >/dev/null 2>&1 &
 fi
 
 # Static feature props are applied once. Never reassociate or change hotspot settings.
@@ -474,6 +478,8 @@ opb_resetprop persist.sys.wifi.mlo_rebalance_request 0
 IDLE_SAMPLES=0
 COUNTRY_ATTEMPTED=""
 while true; do
+    [ ! -f "$MODDIR/disable" ] && [ ! -f "$MODDIR/remove" ] || exit 0
+    opb_lifecycle_step
     opb_read_connection
     if [ "$OPB_LINK_STATE" = disconnected ]; then
         IDLE_SAMPLES=$((IDLE_SAMPLES + 1))

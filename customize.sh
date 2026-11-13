@@ -101,7 +101,7 @@ if [ "$CFG_FOUND" -eq 0 ]; then
 fi
 
 set_perm_recursive "$MODPATH" 0 0 0755 0644
-for SCRIPT in post-fs-data.sh service.sh wifi-heartbeat.sh repair-wifi.sh; do
+for SCRIPT in post-fs-data.sh service.sh wifi-heartbeat.sh repair-wifi.sh action.sh; do
 	set_perm "$MODPATH/$SCRIPT" 0 0 0755
 done
 

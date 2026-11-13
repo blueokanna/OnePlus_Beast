@@ -202,4 +202,5 @@ assert_eq "$(printf '%s\n' "$REG_DUMP" | opb_parse_reg_country 2)" US 'self-mana
 assert_eq "$(printf '%s\n' "$REG_DUMP" | opb_parse_reg_country 9)" unknown 'missing PHY is not global country'
 
 sh tests/wifi-policy-test.sh
+sh tests/lifecycle-test.sh
 echo "All compatibility tests passed."
